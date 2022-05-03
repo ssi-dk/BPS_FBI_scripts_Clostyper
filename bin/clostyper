@@ -160,7 +160,7 @@ if [[ ! -e ${BASHCONFIGFILE} ]]  || [[ ! -s ${BASHCONFIGFILE} ]]; then
 
 
   echo -ne $BASHCONFIG > ${BASHCONFIGFILE}
-  msg $YELLOW"\nPlease update the paths to databases in this file$NOFORMAT: ${BASHCONFIGFILE}\n$YELLOW The correct path to Kraken2 db is required unless you use '--kraken2db'.\n Re-run $PROGNAME $NOFORMAT"
+  msg $YELLOW"\nPlease update the paths to the databases in this file$NOFORMAT: ${BASHCONFIGFILE}\n$YELLOW - at least you need to update the path to Kraken2 db to avoid setting the '--kraken2db' flag in the command line \"every time\" you use $PROGNAME.\n This message is displayed only once and you may not see it again. $NOFORMAT"
 else
   BASHCONFIG="${BASHCONFIGFILE}"
   while IFS="=" read -r database path ; do
@@ -216,11 +216,11 @@ usage (){
   msg $BOLD"OTHERS:"$NOFORMAT
   msg "   -A, --autorun                  Automatically run snakemake workflow after configuration (default: False)"
   msg "   -T, --threads                  Number of threads to use (default: $THREADS)"
-  msg "   --check_dep                    Check dependencies and exit [EXPERIMENTAL]"
+  msg "   --check_dep                    Check if dependencies are ok and then exit "
   msg "   --no-color                     Do not use a colored output (default: False)"
   msg $BOLD"HELP:"$NOFORMAT
   msg "   -h, --help                     Show this help and exit"
-  msg "   --help_all                     Show extended help for all software settings options. Print entended help and exit [EXPERIMENTAL]"
+  msg "   --help_all                     Show extended help for all software settings options [EXPERIMENTAL]"
   msg "   --version                      Show $PROGNAME's version number and exit"
   msg "   --citation                     Show $PROGNAME's citation and exit"
 }
