@@ -1,0 +1,8 @@
+channels:
+  - bioconda
+dependencies:
+  - samtools =1.9
+  - bcftools = 1.9
+  - bowtie2= 2.3.0
+  - tabix = 0.2.6 
+  - seqkit = 0.16.1

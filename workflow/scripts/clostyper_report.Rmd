@@ -1,0 +1,946 @@
+---
+title: "\n _ClosTyper_ analysis report"
+date: "This report was created on `r format(Sys.time(), ' %A (%d %B %Y) at %H:%M')`"
+output:
+  html_document:
+    theme: yeti
+    toc: TRUE
+    toc_float: False
+    code_folding: hide
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 3600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+<style>
+table {
+  white-space: nowrap;
+}
+</style>
+
+
+```{r packages, echo=FALSE, message=FALSE, warning=FALSE}
+if(!require(pacman)){install.packages("pacman");library(pacman)}
+pacman::p_load(benchmarkme, DT, ggplot2, BiocManager, ggtree, aplot, knitr, plotly, RColorBrewer, rjson,  reshape2, treeio, dendextend,  cowplot) 
+#phylocanvas,
+
+
+ knitr::opts_chunk$set(out.width = '80%', fig.asp = 0.5, fig.align = 'center', echo = FALSE, warning = FALSE, message = TRUE, fig.height = 20, fig.width = 20, fig.align = "center")
+ options(markdown.HTML.header = system.file("misc", "datatables.html", package = "knitr"))
+```
+
+```{r import_data, echo=FALSE, message=FALSE, warning=FALSE}
+ results_dir <- snakemake@params[["results_dir"]]
+ samples <- file.path(snakemake@input[["isolates_list"]])
+ seqdata <- file.path(snakemake@input[["fastp_json"]])
+ krakenList <- file.path(snakemake@input[["kraken_tab"]])
+ assembledata.raw <- file.path(snakemake@input[["assembledata"]])
+ krakenList_contigs <- c(snakemake@input[["kraken_tab_contigs"]], snakemake@input[["kraken_tab_assemblies"]])
+ resistance_all.raw <- file.path(snakemake@input[["sum_resistance_all"]])
+ resistance_ncbi.raw <- file.path(snakemake@input[["sum_resistance_ncbi"]])
+ resistance_card.raw <- file.path(snakemake@input[["sum_resistance_card"]])
+ resistance_resfinder.raw <- file.path(snakemake@input[["sum_resistance_resfinder"]])
+ resistance_argannot.raw <- file.path(snakemake@input[["sum_resistance_argannot"]])
+ resistance_megares.raw <- file.path(snakemake@input[["sum_resistance_megares"]])
+ virulence.raw <- file.path(snakemake@input[["sum_virulence"]])
+ mlst <- file.path(snakemake@input[["mlstresults"]])
+ distances.raw <- file.path(snakemake@input[["snpdistsresults"]])
+ core.raw <- file.path(snakemake@input[["snippycore_text"]])
+ tree=read.newick(snakemake@input[["phylogeny_tree"]])
+ pangstats <- file.path(snakemake@input[["Roary_pangenome_summary"]])
+ Pangenome_pie <- file.path(snakemake@input[["Roary_pie"]])
+ pan_svg <- file.path(snakemake@input[["pan_svg"]])
+ acc_svg <- file.path(snakemake@input[["acc_svg"]])
+ acc_distrib  <- file.path(snakemake@input[["Roary_dir"]])
+
+#results_dir = "/home/mostafa.abdel/aProjects/gitProjects/ClosTyper/test_output2"
+#samples <- file.path(paste0(results_dir , "/2_pipeline_results/isolates.txt", sep=""))
+#seqdata <- file.path(list.files (results_dir,  pattern="fastp.json", full.names=T, recursive=T))
+#krakenList <- file.path(list.files (results_dir,  pattern="kraken.reads.tab", full.names=T, recursive=T))
+#assembledata.raw <- file.path(paste0(results_dir , "/2_pipeline_results/denovo.tab", sep=""))
+#krakenList_contigs <- file.path(list.files (results_dir,  pattern="kraken.contigs.tab", full.names=T, recursive=T))
+#resistance_all.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.alldatabases.tab", sep=""))
+#resistance_ncbi.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.ncbi.tab", sep=""))
+#resistance_card.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.card.tab", sep=""))
+#resistance_resfinder.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.resfinder.tab", sep=""))
+#resistance_argannot.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.argannot.tab", sep=""))
+#resistance_megares.raw <- file.path(paste0(results_dir , "/2_pipeline_results/resistance.megares.tab", sep=""))
+#virulence.raw <- file.path(paste0(results_dir , "/2_pipeline_results/virulence.vfdb.tab", sep=""))
+#mlst <- file.path(paste0(results_dir , "/2_pipeline_results/mlst.tab", sep=""))
+#distances.raw <- file.path(paste0(results_dir , "/2_pipeline_results/distances.tab", sep=""))
+#core.raw <- file.path(paste0(results_dir , "/2_pipeline_results/core.txt", sep=""))
+#tree=file.path(paste0(results_dir , "/2_pipeline_results/core.newick", sep=""))
+#pangstats <- file.path(paste0(results_dir , "/2_pipeline_results/roary/summary_statistics.txt", sep=""))
+#Pangenome_pie <- file.path(paste0(results_dir , "/2_pipeline_results/roary/pangenome_pie.png", sep=""))
+#pan_svg <- file.path(paste0(results_dir , "/2_pipeline_results/roary/pan.svg", sep=""))
+#acc_svg <- file.path(paste0(results_dir , "/2_pipeline_results/roary/acc.svg", sep=""))
+#acc_distrib  <- file.path(paste0(results_dir , "/2_pipeline_results/roary/pangenome_frequency.png", sep=""))
+```
+
+```{r check_files, echo=FALSE, message=FALSE, warning=FALSE}
+all_input=c(samples, seqdata, krakenList, assembledata.raw, krakenList_contigs, resistance_all.raw, resistance_card.raw, resistance_ncbi.raw, resistance_resfinder.raw, resistance_argannot.raw, resistance_megares.raw, virulence.raw, mlst, distances.raw)
+for (f in all_input)
+  if (any(!file.exists(f))==TRUE)
+    stop (paste0("Missing input files:", f , sep=" "))
+```
+
+```{r read_data, echo=FALSE, message=FALSE, warning=FALSE}
+#Read sequence data
+percent <- function(x, digits = 2, format = "f") {
+  paste0(formatC(x * 100, format = format, digits = digits), "%")
+}
+
+fastp_results=function(file,max=9, ref_bases=as.numeric(2500000)){
+  Sample = basename(dirname(file))
+  total_bases=as.numeric(fromJSON(file=file)$summary$before_filtering$total_bases)
+  total_reads=as.numeric(fromJSON(file=file)$summary$before_filtering$total_reads)
+  gc_content=percent(fromJSON(file=file)$summary$before_filtering$gc_content)
+  q30_rate=percent(fromJSON(file=file)$summary$before_filtering$q30_rate)
+  q20_rate=percent(fromJSON(file=file)$summary$before_filtering$q20_rate)
+  read1_mean_length=fromJSON(file=file)$summary$before_filtering$read1_mean_length
+  read2_mean_length=fromJSON(file=file)$summary$before_filtering$read2_mean_length
+  duplication_rate=percent(fromJSON(file=file)$duplication$rate)
+  depth=paste0(formatC(total_bases/ref_bases), "X")
+  return(c(Sample,total_bases,total_reads,gc_content,q30_rate,q20_rate,read1_mean_length,read2_mean_length,duplication_rate, depth))
+}
+
+#raead kraken results
+report_kraken=function(file,type="S",max=4){
+  krakenreport=read.delim(file,as.is=T, dec=".")
+  ID = basename(dirname(file))
+  krakenreport=krakenreport[krakenreport[,4]=="U"|krakenreport[,4]==type,]
+  krakenreport=krakenreport[order(krakenreport[,1],decreasing=T),c(6,1)]
+  if(nrow(krakenreport)<max) {
+    new=max-nrow(krakenreport)
+    for(i in 1:new) krakenreport=rbind(krakenreport,c(NA,NA))
+  }
+  krakenreport=krakenreport[1:max,]
+  krakenreport[,1]=trimws(krakenreport[,1])
+  return(c(ID,as.vector(t(krakenreport))))
+}
+#Read assembl_data
+
+#read abricate
+read_abricate=function(file, suffix= file_suffix){
+  file.r=read.delim(file , header = T, sep = "\t", dec = ".", quote = "", check.names = FALSE)
+  file.r [,1] <- gsub( suffix , "", file.r[,1])
+  file.r [,1] <- basename(file.r [,1])
+  colnames(file.r)[colnames(file.r) == "#FILE"] <- "Sample"
+  colnames(file.r)[colnames(file.r) == "NUM_FOUND"] <- "No. of genes"
+  file.r=as.data.frame(file.r)
+}
+
+```
+
+* User: <span style="color:#2E80B2">_`r format(Sys.getenv("LOGNAME"))`_</span>
+* Linux system: <span style="color:#2E80B2">_`r format(Sys.info()["nodename"])` `r format(Sys.info()["machine"])` (`r cpu <- get_cpu(); cpu$no_of_cores` CPUs and `r ram <- get_ram(); format(ram, scientific = TRUE) ` RAMs)_</span>
+* No. of samples:  <span style="color:#2E80B2">_`r length(readLines( samples )) `_</span>
+* Folder results:` `r results_dir` `
+
+_ClosTyper_ version (1.0 beta) is maintained by [Friedrich-Loeffler-Institut, Germany](https://www.fli.de/de/institute/institut-fuer-bakterielle-infektionen-und-zoonosen-ibiz/laborearbeitsgruppen/arbeitsgruppe-clostridien/)
+
+
+***
+
+## _ClosTyper_ results {.tabset}
+
+### 1. Raw reads
+
+#### Contents
+
+* 1.1 Raw read statistics
+* 1.2 Taxonomic classification of raw reads
+
+***
+
+
+##### 1.1 Raw read statistics
+
+```{r seqdata, echo=FALSE}
+ #require(rjson)
+ #prepare data
+ seq_dataList<- lapply(seqdata,fastp_results)
+ seqdata_res<- do.call("rbind",seq_dataList)
+ colnames(seqdata_res)=c("Sample","Total bases", "Total reads", "GC content", "%Q30", "%Q20", "Read1 avg. length", "Read2 avg. length", "%Duplication","Depth")
+
+ #make the table
+  DT::datatable(seqdata_res,
+    caption = "Table 1: This is a simple caption for the table.",
+    rownames=F,
+    fillContainer = F,
+    escape = FALSE,
+    filter = 'top',
+    class='cell-border stripe',
+    style = 'default',
+ extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" =   list(leftColumns=1)),
+  options = list(
+    pageLength = 10,
+    autoWidth = TRUE,
+    columnDefs = list(list(className='dt-center', targets="_all")),
+    dom = 'BRrltpi',
+    scrollX = TRUE,
+    filter = list(position = "top"),
+    fixedColumns = TRUE,
+    order = list(list(0, 'asc')),
+    lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+    ColReorder = TRUE,
+    rowReorder = TRUE,
+    searchHighlight = TRUE,
+    scrollCollapse = TRUE,
+            buttons = list('copy', 'print',
+              list(text = 'Download',
+                   extend = 'collection',
+                   buttons = c('csv', 'excel', 'pdf')
+                   ),
+              I('colvis'))
+  )) %>% DT::formatStyle(names(seqdata_res),lineHeight='70%')
+
+```
+
+***
+
+##### 1.2 Taxonomic classification of raw reads
+
+```{r}
+
+#fileList=list.files( kraken_tab, recursive=T,full.names=T,pattern=".kraken.tab")
+kraken_dataList<- lapply(krakenList,report_kraken,type= "S") #read all results
+kraken_reads_res<- do.call("rbind",kraken_dataList) #combine columns
+
+colnames(kraken_reads_res)=c("Sample","1stMatch","%1stMatch","2ndMatch","%2ndMatch","3rdMatch","%3rdMatch","4thMatch","%4thMatch")
+#make teh table
+#write.table(kraken_reads_res, file="kraken_reads" , quote=FALSE, sep="\t", row.names=FALSE, col.names=TRUE, append=TRUE, qmethod = c("escape"))
+DT::datatable(kraken_reads_res,
+  caption = "Table 1: This is a simple caption for the table.",
+  rownames=F,
+  fillContainer = F,
+  escape = FALSE,
+  filter = 'top',
+  class='cell-border stripe',
+  style = 'default',
+extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+options = list(
+  pageLength = 10,
+  autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,
+  filter = list(position = "top"),
+  fixedColumns = TRUE,
+  order = list(list(0, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE,
+  rowReorder = TRUE,
+  searchHighlight = TRUE,
+  scrollCollapse = TRUE,
+          buttons = list('copy', 'print',
+            list(text = 'Download',
+                 extend = 'collection',
+                 buttons = c('csv', 'excel', 'pdf')
+                 ),
+            I('colvis'))
+)) %>% DT::formatStyle(names(kraken_reads_res),lineHeight='70%') #%>%  formatPercentage(c("%1stMatch","%2ndMatch","%3rdMatch","%4thMatch"))
+#%>% DT::formatStyle("%1stMatch", backgroundColor = styleInterval(cuts = c(98.5),  values = c("gray", "yellow"))
+
+```
+
+### 2. Genomes
+
+#### Contents
+
+* 2.1 Genome assembly statistics
+* 2.2 Taxonomic classification of genomes
+
+***
+
+##### 2.1 Genome assembly statistics
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+assembledata=read.delim( assembledata.raw , header = T, sep = "\t", dec = ".")
+assembledata$Name  <- as.character(assembledata$Name )
+assembledata$Name <- unlist(lapply(strsplit(x = assembledata$Name ,split = "/"), function(x) x[length(x)]))
+assembledata$Name <- gsub(".fasta", "", assembledata$Name)
+
+#colnames(assembledata)=c("Sample", "Reads", "AvgReadLen", "Contigs", "GenomeLength", "LargestContig", "N50", "GC", "Depth", "QUALITY")
+DT::datatable(assembledata, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE,
+          class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+  pageLength = 10, autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,  filter = list(position = "top"),
+  order = list(list(0, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE, rowReorder = TRUE,
+            searchHighlight = TRUE,
+            scrollCollapse = TRUE,
+            buttons = list(
+              list(extend = 'copy',
+                   title = NULL,
+                   exportOptions = list(columns = ":visible")),
+              list(extend = 'print',
+                   exportOptions = list(columns = ":visible")),
+              list(text = 'Download',
+                   extend = 'collection',
+                   title = NULL,
+                   buttons = list(list(extend = 'csv',
+                                       exportOptions = list(columns = ":visible")),
+                                  list(extend = 'excel',
+                                       exportOptions = list(columns = ":visible")),
+                                  list(extend = 'pdf',
+                                       exportOptions = list( columns = ":visible"), #stripHtml = TRUE,
+                                                orientation = 'landscape',
+                                                customize = JS("function(doc){
+                                                doc.styles.tableHeader.color='yellow';
+                                                doc.defaultStyle.alignment = 'left';
+                                                doc.styles.tableHeader.alignment = 'left';
+                                                doc.pageMargins = [15,15,15,15];
+                                                }"
+                                  )
+		))), I('colvis'))
+
+)) %>% DT::formatStyle(names(assembledata),lineHeight='80%')
+```
+***
+
+##### 2.2 Taxonomic classification of genomes
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+dataList_kraken_contigs<- lapply(krakenList_contigs,report_kraken,type= "S") #read all results
+kraken_genome<- do.call("rbind",dataList_kraken_contigs) #combine columns
+colnames(kraken_genome)=c("Sample","1stMatch","%1stMatch","2ndMatch","%2ndMatch","3rdMatch","%3rdMatch","4thMatch","%4thMatch")
+#colnames(kraken_reads)=c("Sample", "Reads", "AvgReadLen", "Contigs", "GenomeLength", "LargestContig", "N50", "GC", "Depth", "QUALITY")
+DT::datatable(kraken_genome,
+  caption = "Table 1: This is a simple caption for the table.",
+  rownames=F,
+  fillContainer = F,
+  escape = FALSE,
+  filter = 'top',
+  class='cell-border stripe',
+  style = 'default',
+extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+options = list(
+  pageLength = 10,
+  autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,
+  filter = list(position = "top"),
+  fixedColumns = TRUE,
+  order = list(list(0, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE,
+  rowReorder = TRUE,
+  searchHighlight = TRUE,
+  scrollCollapse = TRUE,
+          buttons = list('copy', 'print',
+            list(text = 'Download',
+                 extend = 'collection',
+                 buttons = c('csv', 'excel', 'pdf')
+                 ),
+            I('colvis'))
+)) %>% DT::formatStyle(names(kraken_genome),lineHeight='70%')
+```
+***
+
+### 3. Resistance
+
+#### Contents
+
+* 1.1 Results from ABRicate databases (card, resfinder, AGR-ANNOT)
+* 1.2 Taxonomic classification of genomes
+
+***
+
+
+#### Results of all databases {.tabset .tabset-fade .tabset-pills}
+
+##### All databases combined (no duplicates)
+```{r, echo=FALSE}
+all_suffix="/resistance.alldatabases.tab"
+resistance_all <- lapply(resistance_all.raw,read_abricate,suffix= all_suffix )
+resistance_all=as.data.frame(resistance_all)
+DT::datatable(resistance_all, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE, class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+  pageLength = 10, autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,
+  order = list(list(2, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE,
+            searchHighlight = TRUE,
+            scrollCollapse = TRUE,
+            buttons = list(
+#              list(extend = 'copy', exportOptions = list(columns = ":visible")),
+              list(extend = 'print', exportOptions = list(columns = ":visible")),
+              list(text = 'Download',
+                   extend = 'collection',
+                   buttons = list(list(extend = 'csv', exportOptions = list(columns = ":visible")),
+                                  list(extend = 'excel', exportOptions = list(columns = ":visible")),
+                                  list(extend = 'pdf', exportOptions = list( columns = ":visible"), #stripHtml = TRUE,
+                                                orientation = 'landscape',
+                                                customize = JS("function(doc){
+                                                doc.styles.tableHeader.color='yellow';
+                                                doc.defaultStyle.alignment = 'left';
+                                                doc.styles.tableHeader.alignment = 'left';
+                                                doc.pageMargins = [15,15,15,15];
+                                                }"
+                                       )
+		))),
+              I('colvis'))
+
+))
+```
+
+##### NCBI
+```{r, echo=FALSE}
+ncbi_suffix="/resistance.ncbi.tab"
+resistance_ncbi <- as.data.frame(lapply(resistance_ncbi.raw,read_abricate,suffix= ncbi_suffix))
+kable(resistance_ncbi, results='asis', align="c")
+
+```
+
+##### CARD
+```{r, echo=FALSE}
+card_suffix="/resistance.card.tab"
+resistance_card <- as.data.frame(lapply(resistance_card.raw,read_abricate,suffix= card_suffix))
+kable(resistance_card, results='asis', align="c")
+```
+
+##### Resfinder
+```{r, echo=FALSE}
+resfinder_suffix="/resistance.resfinder.tab"
+resistance_resfinder <- as.data.frame(lapply(resistance_resfinder.raw,read_abricate,suffix= resfinder_suffix ))
+kable(resistance_resfinder, results='asis', align="c")
+```
+
+##### ARG-ANNOT
+```{r, echo=FALSE}
+argannot_suffix="/resistance.argannot.tab"
+resistance_argannot <- as.data.frame(lapply(resistance_argannot.raw,read_abricate,suffix= argannot_suffix ))
+kable(resistance_argannot, results='asis', align="c")
+```
+
+##### MEGARES
+```{r, echo=FALSE}
+megares_suffix="/resistance.megares.tab"
+resistance_megares <- as.data.frame(lapply(resistance_megares.raw,read_abricate,suffix= megares_suffix ))
+kable(resistance_megares, results='asis', align="c")
+```
+
+<br>
+
+#### Summary figures {.tabset .tabset-fade .tabset-pills}
+
+##### All databases combined (no duplicates)
+
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_all=resistance_all[,-2]
+resistance_all.plot <- as.matrix(resistance_all[,-1])
+x=colnames(resistance_all)[-1]
+y=resistance_all$Sample
+plot_ly(x=x, y=y, z=resistance_all.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+##### NCBI
+
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_ncbi=resistance_ncbi[,-2]
+resistance_ncbi.plot <- as.matrix(resistance_ncbi[,-1])
+x=colnames(resistance_ncbi)[-1]
+y=resistance_ncbi$Sample
+plot_ly(x=x, y=y, z=resistance_ncbi.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+
+```
+
+##### CARD
+
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_card=resistance_card[,-2]
+resistance_card.plot <- as.matrix(resistance_card[,-1])
+x=colnames(resistance_card)[-1]
+y=resistance_card$Sample
+plot_ly(x=x, y=y, z=resistance_card.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+##### Resfinder
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_resfinder=rresistance_resfinder[,-2]
+resistance_resfinder.plot <- as.matrix(resistance_resfinder[,-1])
+x=colnames(resistance_resfinder)[-1]
+y=resistance_resfinder$Sample
+plot_ly(x=x, y=y, z=resistance_resfinder.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+##### ARG-ANNOT
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_argannot=resistance_argannot[,-2]
+resistance_argannot.plot <- as.matrix(resistance_argannot[,-1])
+x=colnames(resistance_argannot)[-1]
+y=resistance_argannot$Sample
+plot_ly(x=x, y=y, z=resistance_argannot.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+##### MEGARES
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+resistance_megares=resistance_megares[,-2]
+resistance_megares.plot <- as.matrix(resistance_megares[,-1])
+x=colnames(resistance_megares)[-1]
+y=resistance_megares$Sample
+plot_ly(x=x, y=y, z=resistance_megares.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+### 4. Virulence
+
+
+#### Contents
+
+* 1.1 Results from databases (card, resfinder, AGR-ANNOT)
+* 1.2 Taxonomic classification of genomes
+
+***
+
+
+#### Results of databases {.tabset .tabset-fade .tabset-pills}
+
+##### VFDB
+```{r, echo=FALSE}
+vir_suffix="/virulence.vfdb.tab"
+virulence <- lapply(virulence.raw,read_abricate,suffix= vir_suffix )
+virulence=as.data.frame(virulence)
+DT::datatable(virulence, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE, class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+  pageLength = 10, autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,
+  order = list(list(2, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE,
+            searchHighlight = TRUE,
+            scrollCollapse = TRUE,
+            buttons = list(
+#              list(extend = 'copy', exportOptions = list(columns = ":visible")),
+              list(extend = 'print', exportOptions = list(columns = ":visible")),
+              list(text = 'Download',
+                   extend = 'collection',
+                   buttons = list(list(extend = 'csv', exportOptions = list(columns = ":visible")),
+                                  list(extend = 'excel', exportOptions = list(columns = ":visible")),
+                                  list(extend = 'pdf', exportOptions = list( columns = ":visible"), #stripHtml = TRUE,
+                                                orientation = 'landscape',
+                                                customize = JS("function(doc){
+                                                doc.styles.tableHeader.color='yellow';
+                                                doc.defaultStyle.alignment = 'left';
+                                                doc.styles.tableHeader.alignment = 'left';
+                                                doc.pageMargins = [15,15,15,15];
+                                                }"
+                                       )
+		))),
+              I('colvis'))
+
+))
+```
+
+#### Summary figures {.tabset .tabset-fade .tabset-pills}
+
+##### VFDB
+```{r, echo=FALSE, message=FALSE, error=TRUE}
+virulence=virulence[,-2]
+virulence.plot <- as.matrix(virulence[,-1])
+x=colnames(virulence)[-1]
+y=virulence$Sample
+plot_ly(x=x, y=y, z=virulence.plot, type = "heatmap", colors=colorRamp(c("gainsboro", "olivedrab", "forestgreen")), showscale=F) %>% layout(xaxis=list(type="category"), yaxis = list(autorange="reversed"))
+```
+
+### 5. MLST
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+mlst=read.delim(mlst , header = F, sep = "\t", dec = ".", quote = "", check.names = FALSE, fill=TRUE)
+mlst [,1] <- gsub(".fasta", "", mlst[,1])
+colnames(mlst)[1]="Sample"
+#mlst=read.table("2_pipeline_results/mlst.tab", header = F, sep = "\t", dec = ".", row.names=1, fill=TRUE)
+#colnames(mlst)=c("Sample", "Scheme", "Sequence Type", "Allele", "GenomeLength", "LargestContig", "N50", "GC", "Depth", "QUALITY")
+mlst=as.data.frame(mlst)
+mlst=mlst[order(row.names(mlst)),]
+colnames(mlst)[2]="Scheme"
+colnames(mlst)[3]="ST"
+if (ncol(mlst)>=4) {
+for (i in 4:ncol(mlst)){
+	colnames(mlst)[i]="Allele"
+} }
+
+DT::datatable(mlst, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE,
+          class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+  pageLength = 10, autoWidth = TRUE,
+  columnDefs = list(list(className='dt-center', targets="_all")),
+  dom = 'BRrltpi',
+  scrollX = TRUE,  filter = list(position = "top"),
+  order = list(list(0, 'asc')),
+  lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+  ColReorder = TRUE, rowReorder = TRUE,
+            searchHighlight = TRUE,
+            scrollCollapse = TRUE,
+            buttons = list(
+              list(extend = 'copy',
+                   title = NULL,
+                   exportOptions = list(columns = ":visible")),
+              list(extend = 'print',
+                   exportOptions = list(columns = ":visible")),
+              list(text = 'Download',
+                   extend = 'collection',
+                   title = NULL,
+                   buttons = list(list(extend = 'csv',
+                                       exportOptions = list(columns = ":visible")),
+                                  list(extend = 'excel',
+                                       exportOptions = list(columns = ":visible")),
+                                  list(extend = 'pdf',
+                                       exportOptions = list( columns = ":visible"), #stripHtml = TRUE,
+                                                orientation = 'landscape',
+                                                customize = JS("function(doc){
+                                                doc.styles.tableHeader.color='yellow';
+                                                doc.defaultStyle.alignment = 'left';
+                                                doc.styles.tableHeader.alignment = 'left';
+                                                doc.pageMargins = [15,15,15,15];
+                                                }"
+                                  )
+		))),
+              I('colvis'))
+
+)
+) %>%
+DT::formatStyle(names(mlst),lineHeight='80%',"white-space"="nowrap", "ST", backgroundColor = styleEqual("-", "yellow"))
+
+
+
+```
+
+***
+
+### 6. SNP analysis
+
+
+#### Contents
+
+* 6.1 Pairwise SNP distances
+* 6.2 Clusters
+* 6.3 Clusters summary
+* 6.4 Cluster tree
+ <br>
+
+***
+
+
+##### 6.1 Pairwise SNP distances
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#results_dir <- snakemake@params[["results_dir"]]
+#distances <- file.path("/home/mostafa.abdel/aProjects/gitProjects/ClosTyper/2_pipeline_results/distances.tab")
+distances=read.table( distances.raw , header = T, sep = "\t", dec = ".")
+#colnames(assembledata)=c("Sample", "Reads", "AvgReadLen", "Contigs", "GenomeLength", "LargestContig", "N50", "GC", "Depth", "QUALITY")
+DT::datatable(distances, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE,
+          class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+    pageLength = 10,
+    autoWidth = TRUE,
+    columnDefs = list(list(className='dt-center', targets="_all")),
+    dom = 'BRrltpi',
+    scrollX = TRUE,
+    filter = list(position = "top"),
+    fixedColumns = TRUE,
+    order = list(list(0, 'asc')),
+    lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+    ColReorder = TRUE,
+    rowReorder = TRUE,
+    searchHighlight = TRUE,
+    scrollCollapse = TRUE,
+            buttons = list('copy', 'print',
+              list(text = 'Download',
+                   extend = 'collection',
+                   buttons = c('csv', 'excel', 'pdf')
+                   ),
+              I('colvis'))
+)) %>% DT::formatStyle(names(distances),lineHeight='70%')
+
+
+```
+<br>
+
+***
+
+
+##### 6.2 Clusters
+
+
+```{r clustering, echo=FALSE, message=FALSE, warning=FALSE}
+#distances <- file.path("/home/mostafa.abdel/aProjects/gitProjects/ClosTyper/2_pipeline_results/distances.tab")
+distance_matrix <- read.delim( distances.raw , header = T, sep = "\t", dec = ".")
+rownames(distance_matrix) <- distance_matrix[,1]
+distance_matrix <- as.matrix(distance_matrix[,-1])
+colnames(distance_matrix) <- rownames(distance_matrix)
+
+# re-order matrix
+distance_matrix_clustered <- hclust(as.dist(distance_matrix))
+distance_matrix <- distance_matrix[distance_matrix_clustered$order, distance_matrix_clustered$order]
+
+# round distances
+distance_matrix <- round(distance_matrix,0)
+
+# add clustering, cluster-address
+clustering_threshold_range <- as.numeric(strsplit("0,2,5,10,20,50,100,200,1000","[ ,;]+")[[1]])
+
+clust <- distance_matrix %>% as.dist %>% hclust(., method = "single")
+dendro <- clust %>% as.dendrogram
+phylo <- clust %>% as.phylo
+
+# -------------
+
+# subclusters
+
+subcluster_counts <- sapply(clustering_threshold_range, function(cut_threshold) {
+  length(unique(dendextend::cutree(dendro, h = cut_threshold)))
+})
+names(subcluster_counts) <- clustering_threshold_range
+
+# compute cluster memberships and addresses for all cutoffs
+cluster_address_matrix <- do.call(rbind,lapply(sort(clustering_threshold_range,decreasing = T), function(x){
+  dendextend::cutree(dendro, h = x)
+}))
+rownames(cluster_address_matrix) <- as.character(sort(clustering_threshold_range, decreasing = T))
+cluster_address_matrix <-t(cluster_address_matrix)
+
+
+# re-order # TODO superflous with new version
+ cluster_address_matrix <- cluster_address_matrix[,as.character(sort(as.numeric(colnames(cluster_address_matrix)),decreasing = T))]
+
+# convert to single address
+cluster_address <- apply(cluster_address_matrix,1,function(x) paste(x, collapse = "."))
+
+# table of cluster membership
+cluster_address_matrix_augmented <- as.data.frame(cluster_address_matrix)
+colnames(cluster_address_matrix_augmented) <- paste("Threshold ",colnames(cluster_address_matrix_augmented),sep = "=")
+cluster_address_matrix_augmented$Sample <- rownames(cluster_address_matrix)
+
+cluster_address_matrix_augmented[] <- lapply( cluster_address_matrix_augmented, factor)
+
+cluster_address_matrix_augmented <- cluster_address_matrix_augmented[,c(ncol(cluster_address_matrix_augmented),1:(ncol(cluster_address_matrix_augmented)-1))]
+
+DT::datatable(cluster_address_matrix_augmented, caption = "Cluster membership", filter = 'top',rownames= FALSE, escape = FALSE,
+          extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+    options = list(
+                dom = 'BRrltpi',
+                #autoWidth=FALSE,
+                scrollX = TRUE,
+                #fixedColumns = TRUE,
+                lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+                #ColReorder = TRUE,
+                buttons =
+                  list(
+                    'copy',
+                    'print',
+                    list(
+                      extend = 'collection',
+                      buttons = c('csv', 'excel', 'pdf'),
+                      text = 'Download'
+                    ),
+                    I('colvis')
+                  )
+)) %>%  DT::formatStyle(names(cluster_address_matrix_augmented),lineHeight='80%')
+```
+<br>
+
+***
+
+##### 6.3 Clusters summary
+
+```{r cluster_summary, message=FALSE, warning=FALSE}
+# print table of cluster sizes for all thresholds
+clustering_summary <- cbind("Distance threshold" = names(subcluster_counts), "Cluster count" = subcluster_counts)
+knitr::kable(clustering_summary,row.names = F)
+
+```
+
+<br>
+
+***
+
+##### 6.4 Cluster tree
+
+```{r cluster_viz_details, message=FALSE, warning=FALSE}
+
+#color_value <- subcluster_counts[as.character(distance_threshold)]
+color_value <- 3
+distance_threshold=10
+if (length(phylo$tip.label) > 500) {
+    my_cex_tiplabel <- 0.1
+    my_cex_edgelabel <- 0.1
+  } else if (length(phylo$tip.label) > 150) {
+    my_cex_tiplabel <- 0.3
+    my_cex_edgelabel <- 0.3
+      } else if (length(phylo$tip.label) > 50) {
+    my_cex_tiplabel <- 0.5
+    my_cex_edgelabel <- 0.5
+    } else{
+    my_cex_tiplabel <- 0.8
+    my_cex_edgelabel <- 0.8
+  }
+
+
+dendro %>% set("labels_cex", my_cex_tiplabel) %>% set("labels_col", value = rainbow(color_value), h=distance_threshold) %>% set("branches_k_color", value = rainbow(color_value), h = distance_threshold) %>%
+  plot(main = paste("Tree resulting from clustering analysis"), sub = paste("Colored by using cluster threshold of",distance_threshold), horiz = T, xlab = "Clustering threshold", ylab = "Samples")
+abline(v= distance_threshold, col = 8 , lwd = 3)
+
+```
+
+### 7. Core genome / Phylogeny
+
+#### Contents
+
+* 7.1 Core genome alignment statistics
+* 7.2 Core genome static tree
+* 7.3 Core genome interactive tree
+
+***
+
+
+##### 7.1 Core genome alignment statistics
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+core=read.delim(core.raw , header = T, sep = "\t", dec = ".", quote = "", check.names = FALSE)
+
+DT::datatable(core, caption = "Transaction Table", rownames=F, fillContainer = F, filter = 'top', escape = FALSE,
+          class='cell-border stripe', style = 'default',
+  extensions = list("ColReorder" = NULL, "Buttons" = NULL, "FixedColumns" = list(leftColumns=1)),
+  options = list(
+    pageLength = 10,
+    autoWidth = TRUE,
+    columnDefs = list(list(className='dt-center', targets="_all")),
+    dom = 'BRrltpi',
+    scrollX = TRUE,
+    filter = list(position = "top"),
+    fixedColumns = TRUE,
+    order = list(list(0, 'asc')),
+    lengthMenu = list(c(10, 50, -1), c('10', '50', 'All')),
+    ColReorder = TRUE,
+    rowReorder = TRUE,
+    searchHighlight = TRUE,
+    scrollCollapse = TRUE,
+            buttons = list('copy', 'print',
+              list(text = 'Download',
+                   extend = 'collection',
+                   buttons = c('csv', 'excel', 'pdf')
+                   ),
+              I('colvis'))
+)) %>% DT::formatStyle(names(core),lineHeight='70%')
+```
+
+##### {.tabset .tabset-fade .tabset-pills}
+
+###### 7.2 Core genome static tree
+
+```{r, echo=FALSE, message=FALSE, out.width = "100%"}
+#tree=read.newick("2_pipeline_results/core.newick")
+tree=read.newick(tree)
+
+  if (length(tree$tip.label) > 200) {
+    plot_label_size <- 1
+  } else if (length(tree$tip.label) > 50) {
+    plot_label_size <- 2
+  } else {
+    plot_label_size <- 3
+  }
+
+  ggtree(tree) + geom_tiplab(size=plot_label_size) + theme_tree2() + labs(caption="allele distance")
+```
+
+
+###### 7.3 Core genome interactive tree
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, out.width = "100%"}
+#tree=read.newick("2_pipeline_results/core.newick")
+
+#phylocanvas(tree, treetype = "rectangular", nodestyles = NULL,
+#  nodesize = 20, textsize = 30, linewidth = 1, showlabels = TRUE,
+#  alignlabels = TRUE, showhistory = FALSE, showcontextmenu = TRUE,
+#  showscalebar = TRUE, width = NULL, height = NULL, elementId = NULL)
+```
+
+### 8 Pangenome
+
+
+#### Pangenome results {.tabset .tabset-fade .tabset-pills}
+
+##### Pangenome summary statistics
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+pangstats=read.table(pangstats, header = F, sep = "\t", dec = ".")
+pangstats=as.data.frame(pangstats)
+colnames(pangstats)=c("Group", "Description", "Count")
+kable(pangstats, results='asis', align = "c")
+```
+
+
+##### Pangenome compartments
+Pangenome compartments
+
+<p align="center">
+  <img width="800" height="800" src=`r Pangenome_pie` >
+</p>`
+
+##### Pangenome plot
+Pangenome tree based on core genes alignment representation`
+
+
+```{r figSvg,eval=TRUE,echo=FALSE,message=FALSE, error=FALSE, warning=FALSE,fig.height=10}
+#pansvg <- file.path(snakemake@input[["pan_svg"]])
+
+#fig_svg<-cowplot::ggdraw()+cowplot::draw_image(pansvg)
+#plot(fig_svg)
+```
+
+<p align="center">
+<img width="1200" src=`r pan_svg`>
+</p>
+
+
+##### Accessory genome based tree
+Pangenome tree based on accessory genes alignment representation
+<p align="center">
+<img width="1200" src=`r acc_svg`>
+</p>
+
+
+##### Accessory genome distribution
+<p align="center">
+<img width="800" height="500" src=`r acc_distrib `>
+</p>
+
+
+
+### 9. Mobile elemets
+
+
+```
+#TODO
+```
+### 10. Help
+
+```
+#TODO
+```

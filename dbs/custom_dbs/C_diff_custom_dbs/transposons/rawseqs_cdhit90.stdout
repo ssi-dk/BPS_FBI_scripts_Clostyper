@@ -1,0 +1,35 @@
+================================================================
+Program: CD-HIT, V4.6 (+OpenMP), Jan 10 2017, 12:37:57
+Command: cd-hit-est -i cdiff_transposons.fasta -o
+         rawseqs_cdhit90 -d 0
+
+Started: Tue Apr 26 17:10:39 2022
+================================================================
+                            Output                              
+----------------------------------------------------------------
+total seq: 28
+longest and shortest : 106719 and 701
+Total letters: 817131
+Sequences have been sorted
+
+Approximated minimal memory consumption:
+Sequence        : 0M
+Buffer          : 1 X 34M = 34M
+Table           : 1 X 16M = 16M
+Miscellaneous   : 4M
+Total           : 56M
+
+Table limit with the given memory limit:
+Max number of representatives: 40000
+Max number of word counting entries: 92929222
+
+comparing sequences from          0  to         28
+
+       28  finished         27  clusters
+
+Apprixmated maximum memory consumption: 62M
+writing new database
+writing clustering information
+program completed !
+
+Total CPU time 1.17

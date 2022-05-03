@@ -1,0 +1,6 @@
+channels:
+  - conda-forge
+dependencies:
+  - matplotlib=3.5.1
+  - seaborn=0.8.1
+  - biopython=1.73

@@ -1,0 +1,802 @@
+#! /bin/bash -e
+#Friedrich-Loeffler-Institut (https://www.fli.de/), IBIZ
+#date: April, 2, 2022
+#Author: Mostafa Abdel-Glil (mostafa.abdel-glil@fli.de)
+# A bash script to generate input folder and run the snakefile
+
+#TODO
+#ClosTyper
+#TODO #Do a final sanity check to the links in the 1_input samples.
+# no broken links
+# no links of fastq to fasta or the reverse [can be done by greping the first character in the first line. if @ fastq, if > fasta]
+#TODO: make the user able to fed more than one directory via -d. if samples are in multiple folders
+#TODO: #unzip also THE FASTA file if compressed
+#TODO: extended help to overwrite default pipeline Parameters. Otherwise the parameters will be collected from the $BASHCONFIG. This should overwrite the clostyper default settings.
+#Parameters: Genus, abricate datadir,
+
+#snakemake
+#TODO collect the versions of the software used in the snakemake rules
+#TODO create an execution report in snakemake "--report execution_report.html"
+#==============script==============
+pushd . > /dev/null #store the current directory path
+#set -Eeuo pipefail #donot continue on errors
+DIR="${BASH_SOURCE[0]}" #get the actual location of the script
+while [ -h "$DIR" ]; do cd "$(dirname "$DIR")"; DIR="$(readlink "$(basename "$DIR")")"; done #resolve symlink
+cd -P "$(dirname "$DIR")"
+DIR="$(pwd)/"
+popd > /dev/null #restore the stored dir
+BINDIR="$DIR"
+RULESDIR="$BINDIR../workflow/rules"
+SCRIPTSDIR="$BINDIR../workflow/scripts/"
+
+PROGNAME=`basename $0`
+
+#define some functions
+setup_colors() {
+  if [[ -z "${NO_COLOR-}" ]] ; then
+    NOFORMAT='\033[0m' RED='\033[0;31m' GREEN='\033[0;32m' ORANGE='\033[1;33m' BLUE='\033[0;34m' PURPLE='\033[0;35m' CYAN='\033[0;36m' YELLOW='\033[0;33m' BOLD='\033[1m' GREY='\033[1;30m' ITALICS='\033[3m'
+  else
+    NOFORMAT='' RED='' GREEN='' ORANGE='' BLUE='' PURPLE='' CYAN='' YELLOW='' BOLD='' GREY='' ITALICS=''
+  fi
+}
+setup_colors
+
+msg() {
+  echo >&2 -e "${1-}"
+}
+
+die() {
+  local msg=$1
+  local code=${2-1} # default exit status 1
+  msg "$msg"
+  exit "$code"
+}
+
+cleanup() { #TODO
+  trap - SIGINT SIGTERM ERR EXIT
+  #write script here
+}
+
+remove_trailing_slash (){
+  local path=$1
+  if [[ ${path: -1} == "/" ]];
+  then
+      path=$(echo $path | sed 's/\(.*\)\//\1 /')
+  fi
+  echo $path
+#  path="$1" ;
+#  new_path=`echo "$path" | perl -nl -e 's/\/+$//;' -e 'print $_'` ; echo $new_path ;
+}
+
+check_version() #software current_version required_version status
+{ if [ "$(printf '%s\n' "$3" "$2"  | sort --version-sort | head -n1)" = "$3" ]; then
+    msg "----will use "$1" - `which "$1"` | Version $2"
+    local "$4"="success"
+  else
+    die $RED"\nYou have $1 version '$2'. $PROGNAME requires version >= '$3'"$NOFORMAT
+  fi
+}
+
+check_dep(){
+#required software
+local software="pigz any2fasta snakemake"
+#required versions
+required_pigz="2.3.4"
+required_any2fasta="0.4.2"
+required_snakemake="6.15.5"
+
+#check software are there
+for software in $software; do
+  if ! command -v ${software} > /dev/null; then
+    die $RED"Error: Some dependencies are missing\nCheck if ${software} is installed and is in your \$PATH"$NOFORMAT
+  else
+    INSTALL_STATUS="success"
+  fi
+done
+
+#collect current_versions
+current_pigz=`pigz --version 2>&1 | cut -d' ' -f2`
+current_any2fasta=`any2fasta -v  2>&1 | cut -d' ' -f2`
+current_snakemake=`snakemake --version  2>&1 `
+
+#check versions are ok
+check_version pigz $current_pigz $required_pigz PIGZ_STATUS
+check_version any2fasta $current_any2fasta $required_any2fasta ANY2FASTA_STATUS
+check_version snakemake $current_snakemake $required_snakemake SNAKEMAKE_STATUS
+
+#ok message
+if [[ $INSTALL_STATUS == "success" ]] && [[ $PIGZ_STATUS="success" ]] && [[ $ANY2FASTA_STATUS="success" ]] && [[ $SNAKEMAKE_STATUS="success" ]]; then
+  msg "$PROGNAME dependencies are ok"
+fi
+}
+
+#define general variables
+version=0.1-beta
+citation=unpublished
+BASHCONFIGFILE="${DIR}../config/${PROGNAME}_config.txt"
+WELCOMEMSG="\nYou use $PROGNAME vesion $version"
+TIME="$(date '+%F_%H:%M')"
+TIME_FULL="$(date '+%F %T %Z')"
+FASTXFORMAT="[ID]_{1,2}.fastq{.gz} [ID]_S*_R{1,2}_001.fastq{.gz} [ID]_R{1,2}.fastq{.gz} OR [ID].{fasta,fna,fa}"
+REFFORMAT="{ID}.{gbk,fasta,gff,embl}"
+SAMPLETABLEFORMAT="ID\tfastq\t/path/2/read1\t/path/2/read2\nID\tgenome\t/path/2/genome"
+SPECIES_READY="cdifficile" #, cperfringens, cbotulinum.
+OUTDIR_DEFAULT=output_dir_"$(date '+%d%b%Y_%H%M%S')"
+ISNUMBER="^[0-9]+$"
+FASTXDIR=
+SAMPLETABLE=
+SAMPLEFILE=
+REFERENCE=
+
+##define other variables (will be overwritten by the bash config file)
+KRAKEN2DB="/home/DB_RAM/Kraken2DB"
+CUSTOMDBS="$DIR../dbs/custom_dbs"
+SPECIES=
+OUTDIR=
+CHECKQUALITY=0
+DISABLE_PANGENOME=0
+THREADS=16
+QUIET=0
+
+#read databases and variables from the config file
+if [[ ! -e ${BASHCONFIGFILE} ]]  || [[ ! -s ${BASHCONFIGFILE} ]]; then
+  BASHCONFIG=''
+  BASHCONFIG+='#Full paths to databases and schemes\n'
+  BASHCONFIG+="KRAKEN2DB=\"\"\n"
+  BASHCONFIG+="REFSEEKERDB=\"\"\n"
+  BASHCONFIG+="BAKTADB=\"\"\n"
+  BASHCONFIG+="CDIFFICILE_CGMLST=\"\"\n"
+  BASHCONFIG+="CPERFRINGENS_CGMLST=\"\"\n"
+  BASHCONFIG+="CCHAUVOEI_CGMLST=\"\"\n\n"
+  BASHCONFIG+="#Default $PROGNAME software and software settings\n"
+  BASHCONFIG+="THREADS=\"$THREADS\"\n"
+  BASHCONFIG+="assembler=\"shovill\" #choose between [shovill spades sksea]\n"
+  BASHCONFIG+="assembler_options=\"\"\n"
+  BASHCONFIG+="prokka_genustag=\"Clostridia\"\n"
+  BASHCONFIG+="prokka_params=\"--mincontiglen 500 --fast --norrna --notrna\"\n"
+  BASHCONFIG+="VF_db_abricate=\"vfdb\"\n"
+#TODO edit this "hard" path ()
+  BASHCONFIG+="abricate_vir_options=\"--datadir /home/mostafa.abdel/tools/abricate/bin/../db --minid 80 --mincov 30\"\n"
+
+
+  echo -ne $BASHCONFIG > ${BASHCONFIGFILE}
+  msg $YELLOW"\nPlease update the paths to databases in this file$NOFORMAT: ${BASHCONFIGFILE}\n$YELLOW The correct path to Kraken2 db is required unless you use '--kraken2db'.\n Re-run $PROGNAME $NOFORMAT"
+else
+  BASHCONFIG="${BASHCONFIGFILE}"
+  while IFS="=" read -r database path ; do
+    if [[ ! $database =~ ^\ *# && -n $database ]]; then
+      path="${path%%\#*}"    # Del in line right comments
+      database=$(echo $database |  xargs  |  sed 's/^[ \t]*//;s/[ \t]*$//' )   # Del leading and trailing spaces #https://linuxhint.com/sed_remove_whitespace/
+      path=$(echo $path | xargs | sed 's/^[ \t]*//;s/[ \t]*$//' )   # Del spaces
+      path="${path%\"*}"     # Del opening string quotes
+      path="${path#\"*}"     # Del closing string quotes
+      export  "$database"="$path"
+    fi
+  done < $BASHCONFIG
+fi
+
+#make a help MSG and pass arguments (arguments will overwrite the parametrs in $BASHCONFIG)
+usage (){
+  msg ""
+  msg $ORANGE"ClosTyper: Clostridia characterization and typing pipeline"$NOFORMAT
+  msg ""
+  msg "Version: $version (available at: https://gitlab.com/FLI_Bioinfo/ClosTyper)"
+  msg $BOLD"USAGE:"$NOFORMAT
+  msg $GREY" ---------------------"$NOFORMAT
+#  msg " To check data quality without executing the full pipeline [recommended before analysis]"
+  msg "     $PROGNAME --check_quality -d FASTQ_DIRECTORY [-o WORKING_DIRECTORY]"
+#  msg $GREY" ---------------------"$NOFORMAT
+#  msg " To configure and execute the full $PROGNAME pipeline using a metadata table or by reading a fastq directory"
+  msg "     $PROGNAME -d FASTQ/FASTA_DIRECTORY -r REFERENCE [-o WORKING_DIRECTORY] [-s SPECIES] [--run_cgmlst]"
+  msg "     $PROGNAME -t SAMPLE_TABLE -r REFERENCE [-o WORKING_DIRECTORY] [-s SPECIES] [--run_cgmlst]"
+  msg $GREY" ---------------------"$NOFORMAT
+  msg $BOLD"INPUT:"$NOFORMAT
+  msg "   -d, --fastx-directory          DIR, a directory where fastq reads or assembled genomes are present. Required unless -t flag was used"
+#  msg "                                    Must include FASTQ data of at least two samples. Assembled genomes can also be included."
+  msg "                                    Format: $FASTXFORMAT"
+  msg "   -t, --sample_table             FILE (tab delimited), a four-columns based table. See an example in the documentation!"
+  msg "                                    Required unless the -d flag was used. If -t and -d flags were activated, -d will be ignored"
+  msg "   -r, --reference                FILE, Reference genome. Format: $REFFORMAT (required)"
+  msg "   -s, --species                  Run species-specific workflow (default: False; run only the general workflow)"
+  msg "                                    Currently supported Clostridia species are: $SPECIES_READY"
+  msg $BOLD"OUTPUT:"$NOFORMAT
+  msg "   -o, --output-directory         DIR, output directory for the snakemake results (default: $OUTDIR_DEFAULT/)"
+  msg "   -w, --overwrite                Overwrite an existing directory with the results. Useful to append results to previous runs"
+  msg "   -q, --quiet                    Suppress $PROGNAME messages. Report only warnings, errors and the snakemake call"
+  msg $BOLD"WORKFLOW:"$NOFORMAT
+  msg "   -Q, --check_quality            Quickly perform quality assurance on Illumina data [recommended before doing analysis]"
+  msg "   --run_cgmlst                   Do cgMLST analyis using the chewiesnake pipeline [EXPERIMENTAL]"
+  msg "   --run_only_species_wf          Execute ONLY the specified species-specific workflow. Require '-s' [EXPERIMENTAL]"
+  msg "   --select_reference             Select appropriate reference for the SNP anlysis of the dataset [EXPERIMENTAL]"
+  msg "   --snp_pipeline                 Select which pipeline to call SNPs [EXPERIMENTAL]"
+  msg "                                    Supported SNP pipelines are: snippy, reddog, nasp, cfsanpipeline"
+  msg "   --kraken2db                    Path to (Mini)kraken2 DB"
+  msg "   --disable_pangenome            Disable the pangenome analyis"
+  msg "   --disable_report               Do not make the html report"
+  msg $BOLD"OTHERS:"$NOFORMAT
+  msg "   -A, --autorun                  Automatically run snakemake workflow after configuration (default: False)"
+  msg "   -T, --threads                  Number of threads to use (default: $THREADS)"
+  msg "   --check_dep                    Check dependencies and exit [EXPERIMENTAL]"
+  msg "   --no-color                     Do not use a colored output (default: False)"
+  msg $BOLD"HELP:"$NOFORMAT
+  msg "   -h, --help                     Show this help and exit"
+  msg "   --help_all                     Show extended help for all software settings options. Print entended help and exit [EXPERIMENTAL]"
+  msg "   --version                      Show $PROGNAME's version number and exit"
+  msg "   --citation                     Show $PROGNAME's citation and exit"
+}
+
+parse_params() {
+
+if [ $# == 0 ]; then
+	usage
+	die
+fi
+
+#POSITIONAL=()
+while [[ $# -gt 0 ]]
+  do
+    case "${1-}" in
+    -d | --fastx-directory )
+         if [[ "${2-}" ]]; then
+          FASTXDIR="${2-}"
+          shift 2
+          else
+            die $RED"\nError: Please provide an argument for -d/--fastx-directory - exit \n$NOFORMAT"
+          fi
+          ;;
+    -t | --sample_table )
+          if [[ "${2-}" ]]; then
+            SAMPLETABLE="${2-}"
+            shift 2
+          else
+            die $RED"\nError: Please provide an argument for -t/--sample_table - exit \n$NOFORMAT"
+          fi
+          ;;
+    -r | --reference )
+         if [[ "${2-}" ]]; then
+          REFERENCE="${2-}"
+          shift 2
+        else
+          die $RED"\nError: Please provide an argument for -r/--reference - exit \n$NOFORMAT"
+        fi
+          ;;
+    -s | --species)
+        if [[ "${2-}" ]]; then
+          if [[ $2 == 'cdifficile' ]] || [[ $2 == 'cperfringens' ]]; then
+            SPECIES="${2-}"
+            shift 2
+          else
+            die $RED"\nError: '-s/--species' assumes one of the following arguments: $SPECIES_READY - exit \n$NOFORMAT"
+          fi
+        else
+          die $RED"\nError: Please provide a correct argument for -s/--species - exit \n$NOFORMAT"
+        fi
+          ;;
+    -o | --outdir)
+        if [[ "${2-}" ]]; then
+          OUTDIR=`remove_trailing_slash "${2-}"`
+          shift 2
+        fi
+          ;;
+    -w | --overwrite)
+          OVERWRITE=true
+          shift
+          ;;
+    -Q | --check_quality)
+          CHECKQUALITY=true
+          shift
+          ;;
+    --run_only_species_wf)
+          CHECKQUALITY=true
+          shift
+          ;;
+    --kraken2db)
+          if [[ "${2-}" ]]; then
+            KRAKEN2DB="${2-}"
+            shift 2
+          else
+            die $RED"\nError: Please provide the path to KRAKEN2 database using '--kraken2db' - exit \n$NOFORMAT"
+          fi
+          ;;
+    --disable_pangenome)
+          DISABLE_PANGENOME=true
+          shift
+          ;;
+    --disable_report)
+          DISABLE_REPORT=true
+          shift
+          ;;
+    -A | --autorun)
+          AUTORUN=true
+          shift
+          ;;
+    -T | --threads)
+        if [[ "${2-}" ]]; then
+          THREADS="${2-}"
+          if ! [[ $THREADS =~ $ISNUMBER ]] ; then
+            die $RED"\nError: $THREADS is not a number. Please indicate the number of threads to be used with '--threads' \n$NOFORMAT"
+          fi
+          shift 2
+        else
+          die $RED"\nError: Please indicate the number of threads to be used with '--threads' - exit \n$NOFORMAT"
+        fi
+          ;;
+    --version)
+          die "$PROGNAME version: $version"
+          ;;
+    --citation)
+          die "$PROGNAME citation: $citation"
+          ;;
+    --no-color)
+          NO_COLOR=1
+          shift
+          ;;
+    --check_dep)
+          msg "\n$PROGNAME will check if dependencies are ok...\n"; check_dep; die ""
+          ;;
+    -q | --quiet)
+          QUIET=true
+          shift
+          ;;
+    "" | -h | --help)
+          usage
+          die ""
+          ;;
+    -?*) die $RED"\nError: Unknown option: $1. \nPlease use $PROGNAME --help to get available options - exit $NOFORMAT" ;;
+    *) break ;;
+    esac
+#    shift
+  done
+#  set -- "${POSITIONAL[@]}" #restore positional parameters
+ args=("$@")
+  return 0
+}
+
+parse_params "$@"
+setup_colors
+
+#welcome
+if [[ ${QUIET} != true ]]; then
+  msg "$WELCOMEMSG"
+  check_dep
+fi
+#check mandatory arguments
+#fastx dir or a sample table
+if [[ ! -d "$FASTXDIR" ]]; then
+  if [[ ! -f "$SAMPLETABLE" ]]; then
+    die $RED"\nError: You must specify a valid fastq directory or a sample table, use '-d' or '-t' \nPlease use $PROGNAME --help to get available options - exit \n"$NOFORMAT
+  fi
+fi
+#reference
+if [[ -z $REFERENCE ]]; then
+  die $RED"\nError: You must specify a valid reference, use '-r' \nPlease use $PROGNAME --help to get available options - exit \n"$NOFORMAT
+fi
+if [[ ! -e "$REFERENCE" ]]; then
+  die $RED"\nError: REFERENCE '$REFERENCE' does not exist - exit \n"$NOFORMAT
+fi
+
+#check databases are correct
+if [[ -e ${KRAKEN2DB} ]] &&  [[ -f ${KRAKEN2DB}/hash.k2d ]] && [[ -f ${KRAKEN2DB}/opts.k2d ]] && [[ -f ${KRAKEN2DB}/taxo.k2d ]] ; then
+  if [[ ${QUIET} != true ]]; then
+    msg "\n$PROGNAME will use Kraken2 database from: '$KRAKEN2DB'"
+  fi
+else
+  die $RED"Error: The database Kraken2 '$KRAKEN2DB' is unavailable or corrupted. $NOFORMAT\n$YELLOW Either specify the full path to the database in this file: ${DIR}../dbs/config.txt (recommended) or use '--kraken2db'$NOFORMAT"
+fi
+
+#check optional arguments
+if [[ -z ${OUTDIR} ]] ;
+then
+  OUTDIR=${OUTDIR_DEFAULT};
+fi
+
+#make output directory. if existing, overwrite or die
+if [[ -d ${OUTDIR} ]] && [[ ${OVERWRITE} != true ]]; then
+  mkdir $OUTDIR 2> /dev/null || die $RED"\nError: The output directory: '$OUTDIR' already exists. Change directory or use '-w, --overwrite' to append results to previous runs - exit \n $NOFORMAT"
+else
+  mkdir -p "$OUTDIR" #2> /dev/null
+  OUTDIR=$( realpath $OUTDIR)
+  mkdir -p "$OUTDIR"/1_input_samples
+  DIR_INPUTSAMPLES=$(realpath $OUTDIR/1_input_samples)
+  if [[ ${QUIET} != true ]] && [[ ${OVERWRITE} != true ]] ; then
+    msg "\nThe output directoy '$OUTDIR' is created\n"
+  fi
+  if [[ ${OVERWRITE} == true ]] ; then
+    msg $YELLOW"\n----WARNING: You chose to overwrite new samples to the directory '$OUTDIR'."$NOFORMAT
+  fi
+fi
+
+#chech the fastx data, compress if any
+if [[ -d "$FASTXDIR" ]] && [[ ! -f "$SAMPLETABLE" ]] ; then
+    FASTXDIR=`remove_trailing_slash "$FASTXDIR"`
+    FASTXDIR=`realpath "$FASTXDIR"`
+    if [[ ${QUIET} != true ]]; then
+      msg "\nReading FASTQ/FASTA data in the folder: '$FASTXDIR'"
+    fi
+    #check samples in the given dir to meet the required format;
+    CHECKSAMPLES=$((ls ${FASTXDIR}/*_S*_R1_001.{fastq,fastq.gz} 2> /dev/null | xargs -n 1 basename 2> /dev/null; ls ${FASTXDIR}/*_R1*.{fastq,fastq.gz} 2> /dev/null | xargs -n 1 basename 2> /dev/null; ls ${FASTXDIR}/*_1.{fastq,fastq.gz} 2> /dev/null | xargs -n 1 basename 2> /dev/null; ls ${FASTXDIR}/*.{fasta,fna,fa} 2> /dev/null | xargs -n 1 basename 2> /dev/null; ) | awk '{print NF}' | sort | uniq )
+    if [[ $CHECKSAMPLES != 1 ]]; then
+      die $RED"\nError: $PROGNAME can not guess the samples in ${FASTXDIR}.\nSamples names must match this format $FASTXFORMAT.\n\nAlternatively please provide a sample table with flag '-t'.\nFormat:\n$SAMPLETABLEFORMAT $NOFORMAT\n";
+    else
+      if [[ ${QUIET} != true ]]; then
+        msg "----Detected some files to process in $FASTXDIR"
+      fi
+    fi ;
+    #compress the uncompressed fastq data
+    Checkuncompressed=$((ls ${FASTXDIR}/*.{fastq} 2> /dev/null | xargs -n 1 basename 2> /dev/null) | awk '{print NF}' | sort | uniq )
+    if [[ $Checkuncompressed = 1 ]]; then
+      echo -e "----found uncompressed fastq file. Creating .gz files. Original files will not be affected";
+      #TODO compress or die
+      pigz --processes $THREADS --fast --keep ${FASTXDIR}/*fastq
+      echo "--------------------------------------------------------------------------------"
+    fi;
+#TODO: #unzip also THE FASTA file if compressed
+    if [[ ${QUIET} != true ]]; then
+      msg "\nWriting the sample table in '$OUTDIR'"
+    fi
+    #guess the sample names and the read files
+    if [ `ls -1 ${FASTXDIR}/*.fastq.gz 2>/dev/null | wc -l ` -gt 0 ]; then
+      $null > "$DIR_INPUTSAMPLES"/"$TIME"_samples.tsv #"$OUTDIR/samples.tsv"
+      SAMPLEFILE="$DIR_INPUTSAMPLES"/"$TIME"_samples.tsv #"$OUTDIR/samples.tsv"
+      #common miseq files format
+      if  [ `ls -1  ${FASTXDIR}/*_S*_R1_001.fastq.gz 2>/dev/null | wc -l ` -gt 0 ] ; then
+        for file in ${FASTXDIR}/*_S*_R1_001.fastq.gz; do
+            sample=`basename ${file} | awk -F '_S[0-9]' '{print $1}'`
+            R2=`echo ${file} | sed 's/_R1_001.fastq/_R2_001.fastq/'`
+            if [[ -f ${R2} ]]; then
+              if
+                [[ $((zcat -f ${file} | head -n1 | grep -e '@' ) 2> /dev/null)  ]] || [[ $((zcat -f ${R2} | head -n1 | grep -e '@' ) 2> /dev/null)  ]]; then
+                echo -e "$sample\tfastq\t$file\t$R2" >> ${SAMPLEFILE}
+              else
+                msg "$YELLOW----WARNING: Files of sample: $sample seem corrupted - will not be included $NOFORMAT"
+              fi
+            elif [[ ! -f ${R2} ]]; then
+              msg "$YELLOW----WARNING: Reverse read of sample: $sample is missing - will not be included $NOFORMAT"
+            fi
+        done
+      fi
+      if [ `ls -1  ${FASTXDIR}/*_R1*.fastq.gz 2>/dev/null | wc -l ` -gt 0 ]
+      then
+        #execlude the previous format and search for R1*.fastq.gz
+        find ${FASTXDIR} -maxdepth 1 -name "*_R1*.fastq.gz" -not -name "*_S*_R1_001.fastq.gz" -exec echo "{}" \; | while read file; do
+            sample=`basename ${file} | awk -F '_R1' '{print $1}'`
+            R2=`echo ${file} | sed 's/_R1/_R2/'`
+            if [[ -f ${R2} ]]; then
+              if
+                [[ $((zcat -f ${file} | head -n1 | grep -e '@' ) 2> /dev/null) ]] || [[ $((zcat -f ${R2} | head -n1 | grep -e '@' ) 2> /dev/null)  ]]; then
+                echo -e "$sample\tfastq\t$file\t$R2" >> ${SAMPLEFILE}
+              else
+              msg "$YELLOW----WARNING: Files of the sample: $sample seem corrupted - will not be included $NOFORMAT"
+              fi
+            elif [[ ! -f ${R2} ]]; then
+              msg "$YELLOW----WARNING: Reverse read of sample: $sample is missing - will not be included $NOFORMAT"
+            fi
+        done
+        fi
+        #sratoolkit format
+        if [ `ls -1  ${FASTXDIR}/*_1.fastq.gz 2>/dev/null | wc -l ` -gt 0 ]; then
+          for file in ${FASTXDIR}/*_1.fastq.gz; do
+             sample=`basename ${file} | awk -F '_1.fastq.gz' '{print $1}'` #cut -f 1 -d '_'`
+             R2=`echo ${file} | sed 's/_1.fastq/_2.fastq/'`
+             if [[ -f ${R2} ]]; then
+               if
+                 [[ $((zcat -f ${file} | head -n1 | grep -e '@' ) 2> /dev/null) ]] || [[ $((zcat -f ${R2} | head -n1 | grep -e '@' ) 2> /dev/null)  ]]; then
+                 echo -e "$sample\tfastq\t$file\t$R2" >> ${SAMPLEFILE}
+               else
+                 msg "$YELLOW----WARNING: Files of the sample: $sample seem corrupted - will not be included $NOFORMAT"
+               fi
+             elif [[ ! -f ${R2} ]]; then
+               msg "$YELLOW----WARNING: Reverse read of sample: $sample is missing - will not be included $NOFORMAT"
+             fi
+         done
+       fi
+       if [ `ls -1 ${FASTXDIR}/*.{fasta,fna,fa} 2> /dev/null  | wc -l ` -gt 0 ]; then
+         #printf " \n"; echo "genomes:" >> ${outputfile}; #create the output file
+         for file in $( ls ${FASTXDIR}/*.{fasta,fna,fa} 2> /dev/null ); do
+           sample=$( echo $file | xargs -n1 basename 2> /dev/null | sed 's/\(.*\)\.gz/\1/' | sed 's/\(.*\)\..*/\1/' );
+           if
+             [[ $((zcat -f ${file} | head -n1 | grep -e '>' ) 2> /dev/null) ]]; then
+               echo -e "$sample\tgenome\t$file" >> ${SAMPLEFILE}
+           else
+             msg "$YELLOW----WARNING: Files of sample: $sample seem corrupted - will not be included $NOFORMAT"
+           fi
+             done;
+         fi
+     else
+       die $RED"\nError: $PROGNAME can not guess the samples in ${FASTXDIR}.\nSamples names must match this format $FASTXFORMAT.\n\nAlternatively please provide a sample table with flag '-t'.\nFormat:\n$SAMPLETABLEFORMAT $NOFORMAT\n"
+      fi
+      #check if a sample is duplicated
+      dups=`tail -n +1 ${SAMPLEFILE} | cut -f 1 | sort | uniq -c | sed -E 's/^[ ]+//' | cut -f 1 -d ' ' | awk '$1 != 1' | wc -l`
+      if [[ $dups > 0 ]]; then
+          die $RED"\nError: Duplicated sample names. Check if your samples are formated correctly! \n\nAlternatively please provide a sample table with flag '-t'\n\nFormat:\n$SAMPLETABLEFORMAT $NOFORMAT"
+      fi
+fi
+
+if [[ ! -f $SAMPLETABLE ]]; then
+   SAMPLETABLE=$SAMPLEFILE;
+ else
+  SAMPLETABLE=`realpath "$SAMPLETABLE"`
+  if [[ ${QUIET} != true ]]; then
+    msg "\nFound the sample file: '$SAMPLETABLE'"
+  fi
+fi
+
+#if [[ ! -e "$SAMPLETABLE" ]]; then
+#    die $RED"\n$SAMPLETABLE doesn't exist!\n"$NOFORMAT
+#fi
+if [[ $(wc -l < "$SAMPLETABLE") -lt 2  ]]; then
+    die $RED"\nError: at least two samples are required to run the pipeline - exit "$NOFORMAT
+fi
+
+
+#else
+#  die $RED"Cannot not read the samples. Make sure samples are correctly formatted - exit "$NOFORMAT
+#fi
+
+#TODO: if user supplied a sample file, rewrite it in R to ensure that is in correct format
+if [[ -e "$SAMPLETABLE" ]]; then
+#  cp "$SAMPLETABLE" "$DIR_INPUTSAMPLES"/"$TIME"_samples.tsv
+  if [[ ! -e "$DIR_INPUTSAMPLES"/"$TIME"_samples.tsv  ]]; then
+    cp -f "$SAMPLETABLE" "$DIR_INPUTSAMPLES"/"$TIME"_samples.tsv
+  fi
+  dups=`tail -n +1 ${SAMPLETABLE} | cut -f 1 | sort | uniq -c | sed -E 's/^[ ]+//' | cut -f 1 -d ' ' | awk '$1 != 1' | wc -l`
+  if [[ $dups > 0 ]]; then
+      die "\n$RED Error: Duplicated sample names. Be sure sample names are uique: '${SAMPLETABLE}' - exit \n $NOFORMAT"
+  fi
+  if [[ ${QUIET} != true ]]; then
+    msg "\nParsing the sample file: '$SAMPLETABLE'"
+  fi
+    cat $SAMPLETABLE | grep "fastq" |
+    #cut -f 2 -d "$TAB" |\
+    #while read -r line ; do
+      #process FASTQ first
+      # if [[ $(zcat -f ${line} | head -n1 | grep -e '@' ) ]] ; then
+      #  grep "${line}" ${SAMPLEFILE} |\
+        while read -r line ; do
+          ID=$(echo $line | awk '{print $1}');
+          if [[ ${QUIET} != true ]]; then
+            msg "--- writing sample '$ID' to the output folder";
+          fi
+          FILE1=$(echo $line | awk '{print $3}');
+          FILE2=$(echo $line | awk '{print $4}');
+          ln -s -f "$FILE1" "$DIR_INPUTSAMPLES"/"$ID"_1.fastq.gz
+          ln -s -f "$FILE2" "$DIR_INPUTSAMPLES"/"$ID"_2.fastq.gz
+        done
+#      fi
+      #if [[ $(zcat -f ${line} | head -n1 | grep -e '>' )  ]]; then
+      #  grep "${line}" ${SAMPLEFILE} |\
+      cat $SAMPLETABLE | grep "genome" |
+        while read -r line ; do
+          ID=$(echo $line | awk '{print $1}');
+          if [[ ${QUIET} != true ]]; then
+            msg "--- writing sample '$ID' to the output folder";
+          fi
+          FILEGENOME=$(echo $line | awk '{print $3}');
+          ln -s -f "$FILEGENOME" "$DIR_INPUTSAMPLES"/"$ID".fasta
+        done
+#    done
+touch "$OUTDIR"/tmp_create_samples_links.success
+fi
+
+#write the ref sequences
+if [[ -e "$DIR_INPUTSAMPLES"/Reference.fasta ]] && [[ ${OVERWRITE} = true ]]; then
+  REFERENCE="$DIR_INPUTSAMPLES"/Reference.fasta
+  touch "$OUTDIR"/tmp_write_reference.success
+  if [[ ${QUIET} != true ]]; then
+    msg "\nNo need to write the reference sequences. It already exits: "$DIR_INPUTSAMPLES"/Reference.fasta"
+  fi
+else
+  if [[ -e ${REFERENCE} ]] && [[ -s ${REFERENCE} ]]; then
+    reference=$(realpath $(ls $REFERENCE 2>/dev/null ) 2>/dev/null)
+    if [[ ${QUIET} != true ]]; then
+      msg "\nWriting reference sequences"
+    fi
+    any2fasta -q -n -u $reference > "$DIR_INPUTSAMPLES"/Reference.fasta
+    REFERENCE="$DIR_INPUTSAMPLES"/Reference.fasta
+    touch "$OUTDIR"/tmp_write_reference.success
+  fi
+fi
+#writing config file
+if [[ -e "$OUTDIR"/tmp_create_samples_links.success ]] && [[ -e "$OUTDIR"/tmp_write_reference.success ]] ; then
+  if [[ ${QUIET} != true ]]; then
+    msg "\nWriting the config.yaml file in '$OUTDIR' "
+  fi
+    CONFIG=''
+    CONFIG+="snakemake_folder: ${RULESDIR}/\n"
+    CONFIG+="working_dir: ${OUTDIR}/\n"
+    CONFIG+="reference: ${REFERENCE}\n"
+    CONFIG+="\n"
+    CONFIG+="#software\n"
+#TODO no need to state kraken - it is a must
+    CONFIG+="taxoner: kraken\n"
+#TODO correct this
+    CONFIG+="abricate_res_options: --datadir /home/mostafa.abdel/tools/conda/abricate/db --minid 80 --mincov 30\n"
+    CONFIG+="#trimmer: trimmomatic\n"
+    CONFIG+="#assembler: spades #shovill #choose between [shovill spades megahit sksea]\n"
+    CONFIG+="#assembler_options: -t trimmomatic -f true #--trim\n"
+    CONFIG+="#filter: yes\n"
+    CONFIG+="snippy_options: --cleanup #--mincov 5\n"
+    CONFIG+="\n"
+    CONFIG+="shovill_assembler: spades #choose between [spades megahit sksea]\n"
+    CONFIG+="shovill_options: --noreadcorr --nostitch --nocorr #--trim --minlen 500 --mincov 3 #choose between different shovill parameters [--trim --noreadcorr --nostitch --nocorr --minlen 500 --mincov 5 --keepfiles ] #--depth 0 to disable the Sub-sampling of the reads to 100\n"
+    CONFIG+="#MLST_options: --scheme pmultocida_multihost\n"
+    CONFIG+="\n"
+    CONFIG+="prokka_genustag: Clostridia\n"
+    CONFIG+="prokka_params: --mincontiglen 500 --fast --norrna --notrna\n"
+    CONFIG+=
+    if [[ ${DISABLE_PANGENOME} != true ]]; then
+    CONFIG+="roary_params: -r -e -n -v #-i 90 -s #-e, core genes alignment using PRANK, -n using mafft, -r for Rplots, # sometimes you may need to set -i (percentage identity for blastp) and -s (dont split paralogs), according to the organism\n"
+    fi
+    CONFIG+="#dbs\n"
+    CONFIG+="kraken: $KRAKEN2DB\n"
+    CONFIG+="#kraken2_opts: --memory-mapping #--quick --use-mpa-style\n"
+    CONFIG+="VF_db_abricate:  vfdb\n"
+    CONFIG+="abricate_vir_options: --datadir /home/mostafa.abdel/tools/abricate/bin/../db --minid 80 --mincov 30\n"
+
+#master snakefile
+    MASTERRULE=''
+    MASTERRULE+="configfile: \"$OUTDIR/config.yaml\"\n"
+    MASTERRULE+="working_dir=config['working_dir']\n"
+    MASTERRULE+="snakemake_folder=config['snakemake_folder']\n"
+    MASTERRULE+="\n"
+    MASTERRULE+="include: snakemake_folder + \"clostyper.smk\"\n"
+    if [[ ${SPECIES} == cdifficile ]] && [[ ${CHECKQUALITY} != true  ]] ; then
+      MASTERRULE+="include: snakemake_folder + \"cdiff.smk\"\n"
+    fi
+    MASTERRULE+="\nrule all:\n"
+    if [[ ${CHECKQUALITY} = true ]]; then
+      MASTERRULE+="    input: KRAKEN, FASTP," #KRAKEN, FASTP, QUALITYREPORT,
+    fi
+    if [[ ${CHECKQUALITY} != true  ]]; then
+      MASTERRULE+="    input: ASSEMBLY, KRAKEN, KRAKEN2ASSEMBLIES, FASTASTATS, REFERENCE, SNPANALYSIS, SAMPLENAMES, FASTP, VIRULENCE, RESISTANCE, PHYLOGENY, MLST,"
+      if [[ ${DISABLE_PANGENOME} != true ]]; then
+        MASTERRULE+="PROKKA, PANGENOME,"
+      fi
+      if [[ ${DISABLE_REPORT} != true ]]; then
+        MASTERRULE+="REPORT,"
+      fi
+    fi
+
+
+#TODO species rules
+    if [[ ${SPECIES} == cdifficile ]] && [[ ${CHECKQUALITY} != true  ]]; then
+      if [[ ${QUIET} != true ]]; then
+        msg "\nWriting parametrs specific for$ITALICS Clostridioides difficile$NOFORMAT workflow"
+      fi
+        MASTERRULEDIFFICILE="cdiff_trsanposons, cdiff_plasmids, cdiff_phages, cdiff_resistance_mutations"
+        CONFIGDIFFICILE='\n'
+        CONFIGDIFFICILE+="c_difficile_db:\n"
+        CONFIGDIFFICILE+=" transposons:\n"
+        CONFIGDIFFICILE+="  database_dir: $CUSTOMDBS/C_diff_custom_dbs/transposons/ \n"
+        CONFIGDIFFICILE+="  database_name: transposons_clustered.fasta \n"
+        CONFIGDIFFICILE+="  coverage: 70 \n"
+        CONFIGDIFFICILE+=" plasmids:\n"
+        CONFIGDIFFICILE+="  database_dir: $CUSTOMDBS/C_diff_custom_dbs/plasmids/ \n"
+        CONFIGDIFFICILE+="  database_name: plasmids_clustered.fasta \n"
+        CONFIGDIFFICILE+="  coverage: 50 \n"
+        CONFIGDIFFICILE+=" phages:\n"
+        CONFIGDIFFICILE+="  database_dir: $CUSTOMDBS/C_diff_custom_dbs/phages/ \n"
+        CONFIGDIFFICILE+="  database_name: phages_clustered.fasta \n"
+        CONFIGDIFFICILE+="  coverage: 50 \n"
+        CONFIGDIFFICILE+=" resitance_mutations:\n"
+        CONFIGDIFFICILE+="  database_dir: $CUSTOMDBS/C_diff_custom_dbs/res_mutations/\n"
+        CONFIGDIFFICILE+="  database_name: file.fasta\n"
+        CONFIGDIFFICILE+="  aminoacid_position: protein_positions.bed\n"
+        CONFIGDIFFICILE+="  nucleotide_position: nucleotide_positions.bed-only_the_middle_nucleotide\n"
+        CONFIGDIFFICILE+=" pubmlst_loci: False #\n"
+    else
+        MASTERRULEDIFFICILE=''
+        CONFIGDIFFICILE=''
+    fi
+
+    #writing the snakemake file
+    echo -e "$MASTERRULE" "$MASTERRULEDIFFICILE" > "$OUTDIR"/snakefile
+    echo -e "$CONFIG" "$CONFIGDIFFICILE" > "$OUTDIR"/config.yaml
+    if [[ -f "$OUTDIR/config.yaml" ]] && [[ -s "$OUTDIR/config.yaml" ]] ; then
+      touch  "$OUTDIR"/tmp_create_config.success
+    fi
+    if [[ -f "$OUTDIR/snakefile" ]] && [[ -s "$OUTDIR/snakefile" ]]; then
+      touch  "$OUTDIR"/tmp_create_snakefile.success
+    fi
+fi
+
+if [[ -f "${OUTDIR}/tmp_create_config.success" ]] && [[ -f "${OUTDIR}/tmp_create_snakefile.success" ]] ; then
+  if [[ ${QUIET} != true ]]; then
+    msg "\nThe following processes will be executed:"
+    msg "----------------------------------"
+    snakemake -s ${OUTDIR}/snakefile -c ${THREADS} --use-conda -k --ri --configfile ${OUTDIR}/config.yaml --conda-prefix ${BINDIR}../condaenvs --conda-frontend mamba  --nocolor -q -n
+  fi
+  if [[ "$AUTORUN" != true ]]; then
+    msg "\nTo execute the pipeline; run the below command"
+    msg "$GREEN snakemake --snakefile ${OUTDIR}/snakefile --cores ${THREADS} --use-conda --keep-going --rerun-incomplete --configfile ${OUTDIR}/config.yaml --conda-prefix ${BINDIR}../condaenvs --conda-frontend mamba -p $NOFORMAT"
+  fi
+  if [[ "$AUTORUN" == true ]]; then
+    if [[ ${QUIET} != true ]]; then
+      msg "\nExecuting the workflow - this may take a while"
+    fi
+    snakemake --snakefile ${OUTDIR}/snakefile --cores ${THREADS} --use-conda --keep-going --rerun-incomplete --configfile ${OUTDIR}/config.yaml --conda-prefix ${BINDIR}../condaenvs --conda-frontend mamba -p
+  fi
+  touch "$OUTDIR"/tmp_processes_snakefile.success
+else
+  msg $RED"\n$PROGNAME encountered a problem and did not complete successfully"$NOFORMAT
+fi
+
+#On success, update the sample table
+if [[ -f "${OUTDIR}/tmp_processes_snakefile.success" ]] ; then
+  if [[ -f  "$OUTDIR"/samples.tsv ]] ; then
+    mv -f "$OUTDIR"/samples.tsv "$OUTDIR"/samples-old.tsv
+    msg $YELLOW"\n----IMPORTANT WARNING: The file 'samples.tsv' has been overwritten. The previous file is renamed 'samples-old.tsv'.\nCheck "$OUTDIR"/samples.tsv. \n $NOFORMAT"
+  fi
+  if [[ ${QUIET} != true ]]; then
+    msg "\nUpdating the sample table: "$OUTDIR"/samples.tsv"
+  fi
+    echo -e "\tProcessed samples as of $TIME_FULL" > "$OUTDIR"/samples.tsv #"$OUTDIR/samples.tsv"
+    for file in ${DIR_INPUTSAMPLES}/*_1.fastq.gz; do
+      sample=`basename ${file} | awk -F '_1.fastq.gz' '{print $1}'` #cut -f 1 -d '_'`
+      R2=`echo ${file} | sed 's/_1.fastq/_2.fastq/'`
+      echo -e "$sample\tfastq\t$file\t$R2" >> "$OUTDIR"/samples.tsv
+    done
+    for file in $( ls ${DIR_INPUTSAMPLES}/*.fasta 2> /dev/null ); do
+      sample=$( echo $file | xargs -n1 basename 2> /dev/null | sed 's/\(.*\)\.gz/\1/' | sed 's/\(.*\)\..*/\1/' );
+      echo -e "$sample\tgenome\t$file" >> "$OUTDIR"/samples.tsv
+    done;
+   #dups_samplestsv=`tail -n +1 "${OUTDIR}/samples.tsv" | cut -f 1 | sort | uniq -c | sed -E 's/^[ ]+//' | cut -f 1 -d ' ' | awk '$1 != 1' | wc -l`
+   #if [[ $dups_samplestsv > 0 ]] && [[ $OVERWRITE = true ]]; then
+   #fi
+   #clean on success
+   rm -f "$OUTDIR"/{tmp_processes_snakefile.success,tmp_create_samples_links.success,tmp_write_reference.success,tmp_create_config.success,tmp_create_snakefile.success}
+   msg "Finished - Good bye"
+ else
+   msg $RED"\n$PROGNAME encountered a problem and did not complete successfully"$NOFORMAT
+fi
+
+<<'COMMENT'
+#Sorces and templates
+examples
+https://gunzivan28.github.io/rMAP/
+
+#help Rmarkdown
+Check those soon
+https://labs.epi2me.io/workflows/wf-human-sv-report.html
+https://hafen.github.io/rbokeh/articles/rbokeh.html
+
+https://medium.com/compassred-data-blog/top-3-things-to-make-your-rmarkdown-better-part-1-a137f78315b9
+https://www.webentwicklung-frage-antwort-db.com.de/de/r/wie-kombiniere-ich-zwei-rmarkdown-dateien-.rmd-zu-einer-einzigen-ausgabe/1047903251/
+https://www.dataquest.io/blog/r-markdown-tips-tricks-and-shortcuts/
+https://holtzy.github.io/Pimp-my-rmd/#several_columns
+https://bookdown.org/dereksonderegger/444/rmarkdown-tricks.html
+https://bookdown.org/yihui/rmarkdown-cookbook/multiple-authors.html
+https://bookdown.org/yihui/rmarkdown-cookbook/kable.html
+https://stackoverflow.com/questions/34064292/is-it-possible-to-include-svg-image-in-pdf-document-rendered-by-rmarkdown
+
+#help DT
+https://rstudio.github.io/DT/extensions.html
+https://rstudio.github.io/DT/010-style.html
+https://github.com/rstudio/DT/issues/353
+https://rstudio-pubs-static.s3.amazonaws.com/626890_d49a2c5372d14c74bf7a09136402616c.html
+
+#help R
+https://guangchuangyu.github.io/ggtree-book/short-introduction-to-r.html
+https://plotly.com/r/
+https://rdrr.io/cran/phylocanvas/src/R/phylocanvas.R
+https://rstudio.github.io/shinydashboard/index.html
+
+#This code was compiled based on the following resources and templates
+https://betterdev.blog/minimal-safe-bash-script-template/
+https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
+https://gist.github.com/waylan/4080362
+https://github.com/nmquijada/tormes GPL-3.0 License
+https://gitlab.com/bfr_bioinformatics/chewieSnake/ BSD 3-Clause License (c)2019
+https://github.com/cvmullor/reference/blob/master/refeval_main.sh No License
+https://stackoverflow.com/questions/16571739/parsing-variables-from-config-file-in-bash
+
+COMMENT
+
+<<'COMMENT'
+#variables
+#make the output directory, add a timpestamp if the directoy already exists
+#if [[ ! -e $OUTDIR ]]; then mkdir $OUTDIR; fi
+#else OUTDIR="$OUTDIR"_"$(date '+%d%b%Y_%H%M%S')" && mkdir $OUTDIR
+#fi
+
+COMMENT

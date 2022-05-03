@@ -1,0 +1,5 @@
+channels:
+  - bioconda
+dependencies:
+  - seqkit  =0.10.1
+  - mash =2.1

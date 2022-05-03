@@ -1,0 +1,6 @@
+channels:
+  - bioconda
+dependencies:
+  - abricate  =1.0.1
+  - blast=2.11
+
