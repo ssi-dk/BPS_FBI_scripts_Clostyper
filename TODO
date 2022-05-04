@@ -19,6 +19,10 @@
 	https://github.com/pmenzel/ont-assembly-snake/blob/master/Snakefile
 5: #convert svg to pdf: https://snakemake-wrappers.readthedocs.io/en/stable/wrappers/cairosvg.html
 
+6: cut down the rules in the C_diff snakefile
+	#split complex rules into many small rules 
+	#get artificial reads from the assembled genomes and use as input for srst2 
+
 
 #Bash script
 1: progress bar
@@ -33,6 +37,11 @@
 	read the file with pandas 
 	https://stackoverflow.com/questions/29287224/pandas-read-in-table-without-headers 
 5: add -n, --nanopore to 
+6: add -f, --scaffolds
+7: if custom databases are older than N days, then please update to recent version 
+	https://stackoverflow.com/questions/32019432/if-file-modification-date-is-older-than-n-days
+8: watch accession numbers in the NCBI and run on interval of 50 days to grep new sequences 
+	https://askubuntu.com/questions/430382/repeat-a-command-every-x-interval-of-time-in-terminal
 
 
 #snakemake add functionality 
