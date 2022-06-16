@@ -45,6 +45,11 @@ msg() {
   echo >&2 -e "${1-}"
 }
 
+msg_wp() {
+  echo >&2 -e "${1-}" | fold -w 80 -s
+} #wrap long lines every 80 letters, wrap only on white space -s
+
+
 die() {
   local msg=$1
   local code=${2-1} # default exit status 1
@@ -127,6 +132,7 @@ FASTXDIR=
 SAMPLETABLE=
 SAMPLEFILE=
 REFERENCE=
+RUN_ONLY_SPECIES=
 
 ##define other variables (will be overwritten by the bash config file)
 KRAKEN2DB="/home/DB_RAM/Kraken2DB"
@@ -204,15 +210,15 @@ usage (){
   msg "   -w, --overwrite                Overwrite an existing directory with the results. Useful to append results to previous runs"
   msg "   -q, --quiet                    Suppress $PROGNAME messages. Report only warnings, errors and the snakemake call"
   msg $BOLD"WORKFLOW:"$NOFORMAT
-  msg "   -Q, --check_quality            Quickly perform quality assurance on Illumina data [recommended before doing analysis]"
+  msg "   -Q, --check_quality            Quickly perform quality assurance on Illumina data [recommended before doing analysis] [EXPERIMENTAL]"
   msg "   --run_cgmlst                   Do cgMLST analyis using the chewiesnake pipeline [EXPERIMENTAL]"
   msg "   --run_only_species_wf          Execute ONLY the specified species-specific workflow. Require '-s' [EXPERIMENTAL]"
   msg "   --select_reference             Select appropriate reference for the SNP anlysis of the dataset [EXPERIMENTAL]"
   msg "   --snp_pipeline                 Select which pipeline to call SNPs [EXPERIMENTAL]"
   msg "                                    Supported SNP pipelines are: snippy, reddog, nasp, cfsanpipeline"
   msg "   --kraken2db                    Path to (Mini)kraken2 DB"
-  msg "   --disable_pangenome            Disable the pangenome analyis"
-  msg "   --disable_report               Do not make the html report"
+  msg "   --disable_pangenome            Disable the pangenome analyis [EXPERIMENTAL]"
+  msg "   --disable_report               Do not make the html report [EXPERIMENTAL]"
   msg $BOLD"OTHERS:"$NOFORMAT
   msg "   -A, --autorun                  Automatically run snakemake workflow after configuration (default: False)"
   msg "   -T, --threads                  Number of threads to use (default: $THREADS)"
@@ -287,7 +293,7 @@ while [[ $# -gt 0 ]]
           shift
           ;;
     --run_only_species_wf)
-          CHECKQUALITY=true
+          RUN_ONLY_SPECIES=true
           shift
           ;;
     --kraken2db)
@@ -631,7 +637,7 @@ if [[ -e "$OUTDIR"/tmp_create_samples_links.success ]] && [[ -e "$OUTDIR"/tmp_wr
     CONFIG+="kraken: $KRAKEN2DB\n"
     CONFIG+="#kraken2_opts: --memory-mapping #--quick --use-mpa-style\n"
     CONFIG+="VF_db_abricate:  vfdb\n"
-    CONFIG+="abricate_vir_options: --datadir /home/mostafa.abdel/tools/abricate/bin/../db --minid 80 --mincov 30\n"
+    CONFIG+="abricate_vir_options: --datadir /home/mostafa.abdel/tools/abricate/bin/../db --minid 80 --mincov 30\n" #TODO
 
 #master snakefile
     MASTERRULE=''
@@ -643,12 +649,12 @@ if [[ -e "$OUTDIR"/tmp_create_samples_links.success ]] && [[ -e "$OUTDIR"/tmp_wr
     if [[ ${SPECIES} == cdifficile ]] && [[ ${CHECKQUALITY} != true  ]] ; then
       MASTERRULE+="include: snakemake_folder + \"cdiff.smk\"\n"
     fi
-    MASTERRULE+="\nrule all:\n"
+    MASTERRULE+="\nrule all:\n    input:"
     if [[ ${CHECKQUALITY} = true ]]; then
-      MASTERRULE+="    input: KRAKEN, FASTP," #KRAKEN, FASTP, QUALITYREPORT,
+      MASTERRULE+=" KRAKEN, FASTP," #KRAKEN, FASTP, QUALITYREPORT,
     fi
-    if [[ ${CHECKQUALITY} != true  ]]; then
-      MASTERRULE+="    input: ASSEMBLY, KRAKEN, KRAKEN2ASSEMBLIES, FASTASTATS, REFERENCE, SNPANALYSIS, SAMPLENAMES, FASTP, VIRULENCE, RESISTANCE, PHYLOGENY, MLST,"
+    if [[ ${CHECKQUALITY} != true  ]] && [[ ${RUN_ONLY_SPECIES} != true  ]]; then
+      MASTERRULE+=" ASSEMBLY, KRAKEN, KRAKEN2ASSEMBLIES, FASTASTATS, REFERENCE, SNPANALYSIS, SAMPLENAMES, FASTP, VIRULENCE, RESISTANCE, PHYLOGENY, MLST,"
       if [[ ${DISABLE_PANGENOME} != true ]]; then
         MASTERRULE+="PROKKA, PANGENOME,"
       fi
@@ -751,10 +757,6 @@ if [[ -f "${OUTDIR}/tmp_processes_snakefile.success" ]] ; then
 fi
 
 <<'COMMENT'
-#Sorces and templates
-examples
-https://gunzivan28.github.io/rMAP/
-
 #help Rmarkdown
 Check those soon
 https://labs.epi2me.io/workflows/wf-human-sv-report.html
@@ -789,6 +791,8 @@ https://github.com/nmquijada/tormes GPL-3.0 License
 https://gitlab.com/bfr_bioinformatics/chewieSnake/ BSD 3-Clause License (c)2019
 https://github.com/cvmullor/reference/blob/master/refeval_main.sh No License
 https://stackoverflow.com/questions/16571739/parsing-variables-from-config-file-in-bash
+https://gunzivan28.github.io/rMAP/
+
 
 COMMENT
 
