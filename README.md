@@ -69,27 +69,28 @@ wget -O test_data_clostyper.tar.gz https://zenodo.org/record/6656045/files/test_
 tar xzvf test_data_clostyper.tar.gz 
 ```
 ### Run clostyper 
+&#9997; Note: the full path to the Kraken2 database should have been specified in the config file <clostyper/config/clostyper_config.txt>. If not, you must use `--kraken2db </path/2/kraken_database/>`
 * **To check raw data quality**  
 This will only execute the fastp & kraken2    
 Basic call: `clostyper --check_quality -d [FASTQ_DIRECTORY] -r [REFERENCE] [-o WORKING_DIRECTORY] `      
-With the test data    
+- With the test data    
 ```
-clostyper --check_quality -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir --kraken2db </path/2/kraken_database/> -A -T <cpus> 
+clostyper --check_quality -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir -A -T <cpus> 
 ```
 
 * **To configure and execute the full pipeline**    
-  &#9997; [WARNING: Many features of clostyper are still experimental. Please report issues to the issue tracker]  
-This will only execute the full pipeline    
+  &#9997; WARNING: Many features of clostyper are still experimental. Please report issues in the issue tracker (https://gitlab.com/FLI_Bioinfo/clostyper/-/issues)  
+This will execute the full pipeline    
 Basic call: `clostyper -d FASTQ/FASTA_DIRECTORY -r REFERENCE [-o WORKING_DIRECTORY] [-s SPECIES]`     
-With the test data     
+- With the test data     
 ```
-clostyper -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir --kraken2db </path/2/kraken_database/> -A -T <cpus> 
+clostyper -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir -A -T <cpus> 
 ```
 * **To search _C. difficile_ for mobile elements**   
 To ONLY search your genomes for Clostridium difficile mobile elements, invoke the flag `--run_only_species_wf` together with flag `-s`    
-Example with the test dataset
+- Example with the test dataset
 ```
-clostyper -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir  --kraken2db </path/2/kraken_database/> -s cdifficile --run_only_species_wf -A -T <cpus>
+clostyper -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir -s cdifficile --run_only_species_wf -A -T <cpus>
 ```
 
 ### Full usage options 
