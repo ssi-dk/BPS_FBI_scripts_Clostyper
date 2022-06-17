@@ -64,8 +64,10 @@ This file should include the paths to databases and schemes to be used with `clo
 ## Basic usage [with test data]
 
 #### download test data: 
-[to be added]  
-
+```
+wget -O test_data_clostyper.tar.gz https://zenodo.org/record/6656045/files/test_data_clostyper.tar.gz?download=1 
+tar xzvf test_data_clostyper.tar.gz 
+```
 ### Run clostyper 
 * **To check raw data quality**  
 This will only execute the fastp & kraken2    
