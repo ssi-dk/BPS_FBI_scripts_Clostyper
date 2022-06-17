@@ -2,9 +2,10 @@
 
 ClosTyper is a pipeline tool designed to automate characterization and genotyping of selected _Clostrdia_ species using the whole genome sequencing data   
 ClosTyper is written in Snakemake that allows reproducibility and scalability of the intergrated workflow. <br><br>
-&#9995; **This tool is under active development** &#9995; You may think of use WGSBAC (https://gitlab.com/FLI_Bioinfo/WGSBAC) that combine different generalized modules for bacterial characterization based on WGS data  
+&#9995; **This tool is under active development** &#9995;   
+You may think of use WGSBAC (https://gitlab.com/FLI_Bioinfo/WGSBAC) that combine different generalized modules for bacterial characterization based on WGS data  
 
-### Requirements 
+## Requirements 
 ####  Software requirements
 before start, you need to make sure that the follwoing software are installed in your system and that they are available in your $PATH 
 1.  `any2fasta`: Convert various sequence formats to FASTA  (https://github.com/tseemann/any2fasta)   
@@ -21,13 +22,12 @@ before start, you need to make sure that the follwoing software are installed in
 
 4. `conda`: package, dependency and environment management system (https://docs.conda.io/en/latest/) 
     - Installation instructions: https://docs.conda.io/projects/conda/en/latest/user-guide/install/linux.html
-    - conda is required to enable installation of the 
 
 ####   Databases requirements
-1. (MINI)KRAKEN2DB: taxonomic profiling of sequencing data (https://ccb.jhu.edu/software/kraken2/)
+1. (Mini)Kraken2 database: taxonomic profiling of sequencing data (https://ccb.jhu.edu/software/kraken2/)
     - Download page: https://ccb.jhu.edu/software/kraken2/downloads.shtml
 
-### Installation
+## Installation
 #### Install clostyper from source 
 These instructions will install the latest version of `ClosTyper`:
 
@@ -36,7 +36,7 @@ git clone https://gitlab.com/FLI_Bioinfo/clostyper.git
 ln -s `pwd`/clostyper/bin/clostyper /usr/local/bin # choose a folder in your $PATH
 
 ```  
-This should be directory structure of clostyper   
+This should be the directory structure of clostyper   
 
 ```
 |-- bin
@@ -47,8 +47,6 @@ This should be directory structure of clostyper
 |   |-- custom_dbs
 |   `-- trimmomatic.fa
 |-- README.md
-|-- test_data
-|   `-- input_data
 `-- workflow
     |-- envs
     |-- rules
@@ -56,12 +54,12 @@ This should be directory structure of clostyper
     `-- Snakefile
 ```
 
-
+## Usage
 ### First execution 
 
 On first execution of clostyper with `clostyper -h`, a config file will be automatically created <clostyper_config.txt> under the folder <clostyper/config>.   
 This file should include the paths to databases and schemes to be used with `clostyper`.    
-&#9995; Important: at least, the full path to the Kraken2 db must be provided.
+ &#9997; Important: at least the full path to the Kraken2 database must be provided.
 
 ## Basic usage [with test data]
 
@@ -78,7 +76,7 @@ clostyper --check_quality -d test_data/input_data/ -r test_data/input_data/ref.g
 ```
 
 * **To configure and execute the full pipeline**    
- [WARNING: Many features of clostyper are still experimental. Please report issues to the issue tracker]  
+  &#9997; [WARNING: Many features of clostyper are still experimental. Please report issues to the issue tracker]  
 This will only execute the full pipeline    
 Basic call: `clostyper -d FASTQ/FASTA_DIRECTORY -r REFERENCE [-o WORKING_DIRECTORY] [-s SPECIES]`     
 With the test data     
@@ -92,7 +90,7 @@ Example with the test dataset
 clostyper -d test_data/input_data/ -r test_data/input_data/ref.gbk -o results_dir  --kraken2db </path/2/kraken_database/> -s cdifficile --run_only_species_wf -A -T <cpus>
 ```
 
-### Usage options 
+### Full usage options 
 ```
 > clostyper -h
 ClosTyper: Clostridia characterization and typing pipeline
@@ -113,7 +111,7 @@ INPUT:
    -s, --species                  Run species-specific workflow (default: False; run only the general workflow)
                                     Currently supported Clostridia species are: cdifficile
 OUTPUT:
-   -o, --output-directory         DIR, output directory for the snakemake results (default: output_dir_17Jun2022_123925/)
+   -o, --output-directory         DIR, output directory for the snakemake results (default: output_dir_[timestamp]/)
    -w, --overwrite                Overwrite an existing directory with the results. Useful to append results to previous runs
    -q, --quiet                    Suppress clostyper messages. Report only warnings, errors and the snakemake call
 WORKFLOW:
