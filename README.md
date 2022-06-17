@@ -33,7 +33,7 @@ These instructions will install the latest version of `ClosTyper`:
 
 ```
 git clone https://gitlab.com/FLI_Bioinfo/clostyper.git  
-ln -s `pwd`/clostyper/bin/clostyper /usr/local/bin # choose a folder in your $PATH
+ln -s `pwd`/clostyper/bin/clostyper /usr/local/bin/ # choose a folder in your $PATH
 
 ```  
 This should be the directory structure of clostyper   
