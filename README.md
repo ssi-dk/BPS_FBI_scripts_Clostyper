@@ -1,5 +1,7 @@
 # ClosTyper   
 
+__*:warning: Please note that clostyper is still in an early stage of development. There may be substantial changes as many features are still being added*__     
+   
 ClosTyper is a pipeline tool designed to automate characterization and genotyping of selected _Clostrdia_ species using the whole genome sequencing data   
 ClosTyper is written in Snakemake that allows reproducibility and scalability of the intergrated workflow. <br><br>
 &#9995; **This tool is under active development** &#9995;   
