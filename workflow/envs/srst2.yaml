@@ -2,8 +2,8 @@ channels:
   - bioconda
   - conda-forge
 dependencies:
-  - srst2 =0.2.0
-  - biopython =1.76
-  - python= 2.7
-  - bowtie2= 2.2.5
+  - srst2=0.2.0
+  - biopython=1.76
+  - python=2.7
+  - bowtie2=2.2.5
   - samtools=0.1.18
