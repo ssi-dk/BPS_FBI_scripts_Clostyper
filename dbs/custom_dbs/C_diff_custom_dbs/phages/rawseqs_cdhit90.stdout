@@ -1,0 +1,35 @@
+================================================================
+Program: CD-HIT, V4.7 (+OpenMP), Jul 13 2018, 17:17:44
+Command: cd-hit-est -i phages.fasta -o rawseqs_cdhit90 -c 0.9
+         -n 8 -d 0
+
+Started: Thu Jul 27 15:32:06 2023
+================================================================
+                            Output                              
+----------------------------------------------------------------
+total seq: 45
+longest and shortest : 185683 and 17972
+Total letters: 2206322
+Sequences have been sorted
+
+Approximated minimal memory consumption:
+Sequence        : 2M
+Buffer          : 1 X 51M = 51M
+Table           : 1 X 1M = 1M
+Miscellaneous   : 0M
+Total           : 55M
+
+Table limit with the given memory limit:
+Max number of representatives: 40000
+Max number of word counting entries: 93110429
+
+comparing sequences from          0  to         45
+
+       45  finished         40  clusters
+
+Apprixmated maximum memory consumption: 61M
+writing new database
+writing clustering information
+program completed !
+
+Total CPU time 145.59

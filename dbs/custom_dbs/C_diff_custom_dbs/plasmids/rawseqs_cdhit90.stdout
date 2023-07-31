@@ -1,0 +1,35 @@
+================================================================
+Program: CD-HIT, V4.7 (+OpenMP), Jul 13 2018, 17:17:44
+Command: cd-hit-est -i plasmids.fasta -o rawseqs_cdhit90 -c
+         0.9 -n 8 -d 0
+
+Started: Thu Jul 27 15:40:51 2023
+================================================================
+                            Output                              
+----------------------------------------------------------------
+total seq: 23
+longest and shortest : 145122 and 1979
+Total letters: 981815
+Sequences have been sorted
+
+Approximated minimal memory consumption:
+Sequence        : 0M
+Buffer          : 1 X 42M = 42M
+Table           : 1 X 1M = 1M
+Miscellaneous   : 0M
+Total           : 45M
+
+Table limit with the given memory limit:
+Max number of representatives: 392057
+Max number of word counting entries: 94343881
+
+comparing sequences from          0  to         23
+
+       23  finished         23  clusters
+
+Apprixmated maximum memory consumption: 47M
+writing new database
+writing clustering information
+program completed !
+
+Total CPU time 36.04

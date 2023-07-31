@@ -1,0 +1,33 @@
+REF=file.fasta
+BED=protein_positions.bed
+BEDNUC=nucleotide_positions.bed
+READ1=ERR111458_1.fastq
+READ2=ERR111458_2.fastq
+FILENAME=test
+OUTPUT=mutation.txt
+
+#make a Bowtie index file 
+bowtie2-build $REF $REF
+#index with samtools faidx
+samtools faidx $REF
+
+#align the short reads with mode very-sensitive-local 
+bowtie2 -1 $READ1 -2 $READ2 -S "$FILENAME".sam -q --very-sensitive-local --no-unal -a -x $REF --threads 32 -u 1000000
+#make the BAM file
+samtools view -b -o "$FILENAME".unsorted.bam -q 1 -S "$FILENAME".sam
+samtools sort "$FILENAME".unsorted.bam -o "$FILENAME".sorted.bam
+
+#produce a vcf file from the BAM file & index it 
+#https://www.biostars.org/p/367960/ 
+bcftools mpileup -Ou -f $REF "$FILENAME".sorted.bam | bcftools call -Ou --variants-only --multiallelic-caller | bcftools norm -f $REF -Oz -o "$FILENAME".vcf.gz 
+tabix  "$FILENAME".vcf.gz
+
+#create a consensus sequence (ref seq seeded with sample variants)
+bcftools consensus --fasta-ref $REF --haplotype 1 "$FILENAME".vcf.gz > "$FILENAME".consensus.fa
+#get the aminoacid at the specific positions. 
+#seqkit grep  -n -p gyrA consensus.fa | seqkit subseq -r 127:129 | seqkit translate --seq-type dna --transl-table 11
+seqkit translate --seq-type dna --transl-table 11 "$FILENAME".consensus.fa  --out-file "$FILENAME".consensus.faa
+seqkit subseq --bed $BED "$FILENAME".consensus.faa | seqkit fx2tab > "$FILENAME"."$OUTPUT"
+
+#
+bcftools mpileup -T $BEDNUC -Ou -f $REF "$FILENAME".sorted.bam | bcftools call -Ou -vm | bcftools norm -f $REF -Oz | bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\n" --print-header -o "$FILENAME".mutation.nuc.txt
